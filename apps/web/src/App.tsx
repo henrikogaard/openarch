@@ -6,6 +6,7 @@ import {
   createModel,
   createSampleModel,
   diffModels,
+  duplicateElements,
   elementRefsForNodes,
   filterModelByDomain,
   getElementType,
@@ -143,7 +144,10 @@ export default function App() {
   const [modelVersion, setModelVersion] = useState<number | undefined>(undefined);
   const [dirty, setDirty] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const modelRef = useRef<Model | null>(null);
+  const clipboardRef = useRef<string[]>([]);
+  const pasteCountRef = useRef(0);
 
   const repository = useMemo<ModelRepository>(
     () => (mode === 'local' ? new LocalRepository() : new ServerRepository(apiUrl)),
@@ -192,16 +196,61 @@ export default function App() {
     setDirty(true);
   }, [future]);
 
+  // Report canvas selection up with a reference-stable update: re-rendering App
+  // mid-drag would cancel an in-progress connection.
+  const handleCanvasSelection = useCallback((nodeIds: string[]) => {
+    setSelectedNodeIds((prev) =>
+      prev.length === nodeIds.length && prev.every((id, i) => id === nodeIds[i]) ? prev : nodeIds,
+    );
+  }, []);
+
+  // Copy/paste/duplicate of the selected canvas subgraph (in-memory clipboard).
+  const duplicateSelection = useCallback(
+    (elementIds: string[]) => {
+      const current = modelRef.current;
+      if (!current || !elementIds.length) return;
+      const view = current.views[activeViewIndex];
+      if (!view) return;
+      pasteCountRef.current += 1;
+      const step = 40 * pasteCountRef.current;
+      commit((model) => duplicateElements(model, elementIds, view.id, { x: step, y: step }));
+      notify(`Duplicated ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
+    },
+    [activeViewIndex, commit, notify],
+  );
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
-      event.preventDefault();
-      if (event.shiftKey) redo();
-      else undo();
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if (typing) return;
+      const current = modelRef.current;
+      const elementIds = current ? elementRefsForNodes(current, selectedNodeIds) : [];
+      if (key === 'c' && elementIds.length) {
+        event.preventDefault();
+        clipboardRef.current = elementIds;
+        pasteCountRef.current = 0;
+        notify(`Copied ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
+      } else if (key === 'v' && clipboardRef.current.length) {
+        event.preventDefault();
+        duplicateSelection(clipboardRef.current);
+      } else if (key === 'd' && elementIds.length) {
+        event.preventDefault();
+        duplicateSelection(elementIds);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [undo, redo]);
+  }, [undo, redo, selectedNodeIds, duplicateSelection, notify]);
 
   const refreshWorkspaces = useCallback(async () => {
     try {
@@ -313,6 +362,8 @@ export default function App() {
     setReadOnly(false);
     setDirty(false);
     setLastSavedAt(next.updatedAt ?? null);
+    setSelectedNodeIds([]);
+    clipboardRef.current = [];
     window.history.replaceState(
       null,
       '',
@@ -927,6 +978,7 @@ export default function App() {
                       onNodesDelete={deleteNodes}
                       onEdgesDelete={deleteEdges}
                       onBulkAssign={bulkAssign}
+                      onSelectionChange={handleCanvasSelection}
                     />
                   </div>
                   {magic && (

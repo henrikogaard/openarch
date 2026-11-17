@@ -239,8 +239,8 @@ Follow the two-week sprint in `docs/status-2026-11-17.md` §5 and the drawing-de
 to the model, multi-select + bulk assign, autosave, error boundary, Playwright E2E (branch
 `feat/drawing-depth-trust`). Next:
 
-1. **Drawing polish**: copy/paste/duplicate, align/distribute, snap-to-grid, bendpoints,
-   on-canvas labels, containers, z-order, context menu, palette drag-and-drop (roadmap Phase 7A,
+1. **Drawing polish**: align/distribute, snap-to-grid, bendpoints, on-canvas labels, containers,
+   z-order, context menu, palette drag-and-drop (copy/paste/duplicate ✅; roadmap Phase 7A,
    `docs/roadmap.md` §12).
 
 **Definition of done for this sprint:** a new user can create a workspace, draw and connect

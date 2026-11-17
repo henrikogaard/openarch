@@ -172,6 +172,16 @@ the node array and silently deselected everything else.
 
 **Guard:** `e2e/smoke.spec.ts` asserts Shift multi-select reaches "2 selected" before bulk-assign.
 
+### 6. Selection reporting re-rendered App mid-drag and cancelled connections
+
+Lifting canvas selection into App state re-rendered App on every selection emission, which
+interrupted an in-progress handle drag, so the magic connector never opened.
+
+**Fix:** reference-stable `setState` in the App-level selection handler.
+
+**Guard:** `e2e/smoke.spec.ts` and `e2e/duplicate.spec.ts` both drive a real handle-to-handle
+connection.
+
 ---
 
 *ArchiMate® is a registered trademark of The Open Group. OpenArch is not affiliated with,

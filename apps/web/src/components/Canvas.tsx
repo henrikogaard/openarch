@@ -173,6 +173,7 @@ interface CanvasProps {
   onNodesDelete: (nodeIds: string[]) => void;
   onEdgesDelete: (edgeIds: string[]) => void;
   onBulkAssign: (elementIds: string[], patch: { domain?: string; environment?: string }) => void;
+  onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void;
 }
 
 export default function Canvas({
@@ -189,6 +190,7 @@ export default function Canvas({
   onNodesDelete,
   onEdgesDelete,
   onBulkAssign,
+  onSelectionChange,
 }: CanvasProps) {
   const t = useTranslation();
   const initialNodes = useMemo(
@@ -250,6 +252,7 @@ export default function Canvas({
               ? prev
               : nextEdgeIds,
           );
+          onSelectionChange?.(nextNodeIds, nextEdgeIds);
         }}
         onNodesDelete={(deleted) => onNodesDelete(deleted.map((node) => node.id))}
         onEdgesDelete={(deleted) => onEdgesDelete(deleted.map((edge) => edge.id))}
@@ -316,8 +319,8 @@ export default function Canvas({
           )}
         </Panel>
         <Panel position="top-right" className="canvas-hint">
-          Drag a handle between elements to connect · valid relationship types are suggested · Shift-click to
-          multi-select · Delete removes the selection from the model
+          Drag a handle between elements to connect · Shift-click to multi-select · ⌘/Ctrl+C/V/D copy, paste,
+          duplicate · Delete removes the selection from the model
         </Panel>
         {selectionCount > 0 && (
           <Panel position="bottom-center" className="selection-bar">

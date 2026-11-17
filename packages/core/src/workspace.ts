@@ -6,6 +6,7 @@ import type {
   Domain,
   Model,
   ModelSummary,
+  Point,
   WorkspaceStatus,
 } from './types';
 import { primaryText } from './types';
@@ -163,6 +164,87 @@ export function assignElements(
   return {
     ...model,
     elements: model.elements.map((element) => (ids.has(element.id) ? { ...element, ...patch } : element)),
+  };
+}
+
+/**
+ * Duplicate a set of elements as a subgraph: the elements, the relationships
+ * whose endpoints are both in the set, and their nodes/edges in the given view
+ * (shifted by `offset`). New ids throughout; the input model is untouched.
+ */
+export function duplicateElements(
+  model: Model,
+  elementIds: string[],
+  viewId: string,
+  offset: Point = { x: 40, y: 40 },
+): Model {
+  const ids = new Set(elementIds);
+  const selected = model.elements.filter((element) => ids.has(element.id));
+  if (!selected.length) return model;
+
+  const elementIdMap = new Map(selected.map((element) => [element.id, `el-${crypto.randomUUID()}`]));
+  const newElements: ArchiElement[] = selected.map((element) => ({
+    ...element,
+    id: elementIdMap.get(element.id)!,
+    name: element.name.map((text) => ({ ...text, value: `${text.value} (copy)` })),
+    properties: element.properties.map((property) => ({ ...property })),
+  }));
+
+  const relationshipIdMap = new Map<string, string>();
+  const newRelationships = model.relationships
+    .filter((relationship) => ids.has(relationship.source) && ids.has(relationship.target))
+    .map((relationship) => {
+      const id = `rel-${crypto.randomUUID()}`;
+      relationshipIdMap.set(relationship.id, id);
+      return {
+        ...relationship,
+        id,
+        source: elementIdMap.get(relationship.source)!,
+        target: elementIdMap.get(relationship.target)!,
+        name: relationship.name.map((text) => ({ ...text })),
+        properties: relationship.properties.map((property) => ({ ...property })),
+      };
+    });
+
+  const views = model.views.map((view) => {
+    if (view.id !== viewId) return view;
+    const nodeIdMap = new Map<string, string>();
+    const addedNodes = view.nodes
+      .filter((node) => node.elementRef && ids.has(node.elementRef))
+      .map((node) => {
+        const id = `node-${crypto.randomUUID()}`;
+        nodeIdMap.set(node.id, id);
+        return {
+          ...node,
+          id,
+          elementRef: elementIdMap.get(node.elementRef!)!,
+          label: node.label.map((text) => ({ ...text })),
+          bounds: {
+            x: node.bounds.x + offset.x,
+            y: node.bounds.y + offset.y,
+            w: node.bounds.w,
+            h: node.bounds.h,
+          },
+        };
+      });
+    const addedEdges = view.edges
+      .filter((edge) => nodeIdMap.has(edge.source) && nodeIdMap.has(edge.target))
+      .map((edge) => ({
+        ...edge,
+        id: `edge-${crypto.randomUUID()}`,
+        relationshipRef: relationshipIdMap.get(edge.relationshipRef)!,
+        source: nodeIdMap.get(edge.source)!,
+        target: nodeIdMap.get(edge.target)!,
+        bendpoints: edge.bendpoints.map((point) => ({ ...point })),
+      }));
+    return { ...view, nodes: [...view.nodes, ...addedNodes], edges: [...view.edges, ...addedEdges] };
+  });
+
+  return {
+    ...model,
+    elements: [...model.elements, ...newElements],
+    relationships: [...model.relationships, ...newRelationships],
+    views,
   };
 }
 
