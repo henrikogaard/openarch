@@ -150,5 +150,29 @@ standard on every commit**.
 
 ---
 
+## Phase 7A findings (2026-11-17, found by the new Playwright E2E)
+
+### 4. Selection state caused an infinite render loop
+
+`onSelectionChange` set two state arrays with fresh identities on every store emission, so React
+hit "Maximum update depth exceeded" and (before the error boundary existed) the editor blanked.
+
+**Fix:** reference-stable `setState` (return the previous array when the ids are unchanged), plus a
+per-tab `ErrorBoundary` so a future loop shows a recoverable panel instead of a blank app.
+
+**Guard:** `e2e/smoke.spec.ts` exercises select → bulk-assign → delete; the ErrorBoundary itself is
+covered by a jsdom test in `components.test.tsx`.
+
+### 5. Controlled `selected` flag on canvas nodes broke multi-select
+
+`toFlowNodes` stamped `selected` from the app-level `selectedElementId`, so every node click rebuilt
+the node array and silently deselected everything else.
+
+**Fix:** selection is owned by React Flow alone; the app-level selection only drives the inspector.
+
+**Guard:** `e2e/smoke.spec.ts` asserts Shift multi-select reaches "2 selected" before bulk-assign.
+
+---
+
 *ArchiMate® is a registered trademark of The Open Group. OpenArch is not affiliated with,
 endorsed by, or certified by The Open Group.*

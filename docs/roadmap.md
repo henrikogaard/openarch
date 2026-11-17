@@ -467,7 +467,7 @@ proving it, and the diagram survives a round-trip looking the way the user left 
 | 10 | `openarch check` + PR workflow | 2 | ✅ |
 | 11 | Canvas delete synced to model + multi-select bulk assign | 7A | ✅ `feat/drawing-depth-trust` |
 | 12 | Autosave + saved/unsaved badge + per-tab error boundary | 6 | ✅ `feat/drawing-depth-trust` |
-| 13 | Playwright E2E: create → add → connect → delete → bulk-assign → reload → export AOEF | 6/7A | Next |
+| 13 | Playwright E2E: create → add → connect → bulk-assign → delete → reload → export AOEF | 6/7A | ✅ `e2e/smoke.spec.ts`, runs in CI |
 | 14 | Drawing polish: copy/paste, align/distribute, snap, bendpoints, on-canvas labels | 7A | Next |
 | 15 | Containers, z-order, context menu, palette drag-and-drop, presentation mode | 7A | Later |
 | 16 | C4 / Structurizr bridge | 2 | Next |

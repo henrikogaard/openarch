@@ -85,7 +85,6 @@ function toFlowNodes(
   view: View,
   elements: ArchiElement[],
   domains: Domain[],
-  selectedElementId: string | null,
   visibleLayers: Set<Layer>,
   environmentFilter: string,
 ): Node[] {
@@ -128,7 +127,6 @@ function toFlowNodes(
       position: { x: node.bounds.x, y: node.bounds.y },
       style: { width: node.bounds.w, height: node.bounds.h },
       data,
-      selected: element?.id === selectedElementId,
     };
   });
 }
@@ -166,7 +164,6 @@ interface CanvasProps {
   elements: ArchiElement[];
   relationships: Relationship[];
   domains: Domain[];
-  selectedElementId: string | null;
   visibleLayers: Set<Layer>;
   environmentFilter: string;
   onSelectElement: (id: string) => void;
@@ -183,7 +180,6 @@ export default function Canvas({
   elements,
   relationships,
   domains,
-  selectedElementId,
   visibleLayers,
   environmentFilter,
   onSelectElement,
@@ -196,8 +192,8 @@ export default function Canvas({
 }: CanvasProps) {
   const t = useTranslation();
   const initialNodes = useMemo(
-    () => toFlowNodes(view, elements, domains, selectedElementId, visibleLayers, environmentFilter),
-    [view, elements, domains, selectedElementId, visibleLayers, environmentFilter],
+    () => toFlowNodes(view, elements, domains, visibleLayers, environmentFilter),
+    [view, elements, domains, visibleLayers, environmentFilter],
   );
   const initialEdges = useMemo(() => toFlowEdges(view, relationships), [view, relationships]);
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -240,8 +236,20 @@ export default function Canvas({
         deleteKeyCode={['Backspace', 'Delete']}
         multiSelectionKeyCode="Shift"
         onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) => {
-          setSelectedNodeIds(selectedNodes.map((node) => node.id));
-          setSelectedEdgeIds(selectedEdges.map((edge) => edge.id));
+          // Reference-stable updates: React Flow re-emits selection on store
+          // changes, and a fresh array every time would loop renders.
+          const nextNodeIds = selectedNodes.map((node) => node.id);
+          const nextEdgeIds = selectedEdges.map((edge) => edge.id);
+          setSelectedNodeIds((prev) =>
+            prev.length === nextNodeIds.length && prev.every((id, i) => id === nextNodeIds[i])
+              ? prev
+              : nextNodeIds,
+          );
+          setSelectedEdgeIds((prev) =>
+            prev.length === nextEdgeIds.length && prev.every((id, i) => id === nextEdgeIds[i])
+              ? prev
+              : nextEdgeIds,
+          );
         }}
         onNodesDelete={(deleted) => onNodesDelete(deleted.map((node) => node.id))}
         onEdgesDelete={(deleted) => onEdgesDelete(deleted.map((edge) => edge.id))}

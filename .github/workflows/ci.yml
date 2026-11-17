@@ -21,3 +21,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # E2E smoke test: create → add → connect → bulk-assign → delete → reload → export AOEF.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

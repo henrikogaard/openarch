@@ -159,7 +159,8 @@ Helpers live in `packages/core/src/workspace.ts` (`filterModelByDomain`, `domain
 ## 8. Testing
 
 ```bash
-npm test                 # 135 tests: unit, XSD conformance, server integration, UI render
+npm test                 # unit, XSD conformance, server integration, UI render (vitest)
+npm run test:e2e         # Playwright smoke test against the dev server on :5173
 npm run typecheck
 npm run build
 ```
@@ -168,7 +169,9 @@ npm run build
 - **Server integration** boots the real server on a random port and exercises auth/RBAC/locking/
   import/approvals.
 - **UI tests** use jsdom and render analysis components; they do **not** click the canvas.
-- **No E2E tests yet.** Adding Playwright is task 3 in the status document.
+- **E2E** uses Playwright (`npm run test:e2e`, config `playwright.config.ts`, specs in `e2e/`):
+  create → add → connect → bulk-assign → delete → reload → export AOEF against the dev server on
+  `:5173`. Runs in CI after `npx playwright install --with-deps chromium`.
 
 When fixing a bug, add a regression test. When changing the metamodel, update
 `packages/core/src/extended.test.ts`.
@@ -199,7 +202,9 @@ When fixing a bug, add a regression test. When changing the metamodel, update
 
 ## 10. Transferring to another computer
 
-The working tree is uncommitted. Choose one:
+`main` is committed and pushed (`origin` = GitHub). For new work, branch in a worktree under
+`.claude/worktrees/` (git-ignored) and open a PR. If a clone ever ends up with only the initial
+commit, recover from a bundle:
 
 ```bash
 # Option A — commit and push (preferred)
@@ -231,13 +236,12 @@ After transfer: `npm install && npm test && npm run dev`.
 
 Follow the two-week sprint in `docs/status-2026-11-17.md` §5 and the drawing-depth track
 (Phase 7A) in `docs/roadmap.md` §12. Done already: commit/push (`8c45f61`), canvas delete synced
-to the model, multi-select + bulk assign, autosave, error boundary (branch
+to the model, multi-select + bulk assign, autosave, error boundary, Playwright E2E (branch
 `feat/drawing-depth-trust`). Next:
 
-1. **Playwright smoke test**: create workspace → add element → connect → delete → bulk-assign →
-   reload → export AOEF.
-2. **Drawing polish**: copy/paste/duplicate, align/distribute, snap-to-grid, bendpoints,
-   on-canvas labels, containers, z-order, context menu, palette drag-and-drop.
+1. **Drawing polish**: copy/paste/duplicate, align/distribute, snap-to-grid, bendpoints,
+   on-canvas labels, containers, z-order, context menu, palette drag-and-drop (roadmap Phase 7A,
+   `docs/roadmap.md` §12).
 
 **Definition of done for this sprint:** a new user can create a workspace, draw and connect
 elements, delete them, bulk-assign a domain, reload without losing work, and export a valid AOEF

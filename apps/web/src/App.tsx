@@ -918,7 +918,6 @@ export default function App() {
                       elements={scopedModel?.elements ?? []}
                       relationships={scopedModel?.relationships ?? []}
                       domains={model.domains ?? []}
-                      selectedElementId={selectedElementId}
                       visibleLayers={visibleLayers}
                       environmentFilter={environmentFilter}
                       onSelectElement={setSelectedElementId}
