@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["node", "vitest/globals", "vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@openarch/core": ["packages/core/src/index.ts"],
+      "@openarch/ai": ["packages/ai/src/index.ts"],
+      "@openarch/enrichment": ["packages/enrichment/src/index.ts"],
+      "@openarch/repository": ["packages/repository/src/index.ts"]
+    }
+  }
+}

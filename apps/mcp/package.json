@@ -1,0 +1,20 @@
+{
+  "name": "@openarch/mcp",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "openarch-mcp": "src/index.ts"
+  },
+  "scripts": {
+    "mcp": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@openarch/ai": "*",
+    "@openarch/core": "*",
+    "@openarch/repository": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

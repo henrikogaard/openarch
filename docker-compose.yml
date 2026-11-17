@@ -1,0 +1,14 @@
+services:
+  openarch:
+    build: .
+    ports:
+      - '8080:8080'
+    environment:
+      PORT: 8080
+      OPENARCH_DATA: /data/models.json
+    volumes:
+      - openarch-data:/data
+    restart: unless-stopped
+
+volumes:
+  openarch-data:

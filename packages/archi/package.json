@@ -1,0 +1,13 @@
+{
+  "name": "@openarch/archi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@openarch/core": "*",
+    "fflate": "^0.8.2",
+    "fast-xml-parser": "^5.12.1"
+  }
+}
