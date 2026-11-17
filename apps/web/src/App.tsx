@@ -1,16 +1,21 @@
 import {
   allowedRelationships,
+  assignElements,
   buildConfiguredView,
   createFromTemplate,
   createModel,
   createSampleModel,
   diffModels,
+  elementRefsForNodes,
   filterModelByDomain,
   getElementType,
   LAYER_LABELS,
   LAYER_ORDER,
   parseAoef,
   primaryText,
+  relationshipRefsForEdges,
+  removeElements,
+  removeRelationships,
   serializeAoef,
   type ArchiElement,
   type Artefact,
@@ -48,6 +53,7 @@ import Catalog from './components/Catalog';
 import Collaborate from './components/Collaborate';
 import Dashboard from './components/Dashboard';
 import DeploymentView from './components/DeploymentView';
+import ErrorBoundary from './components/ErrorBoundary';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
 import Enrichment from './components/Enrichment';
@@ -135,6 +141,8 @@ export default function App() {
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [showSavedViews, setShowSavedViews] = useState(false);
   const [modelVersion, setModelVersion] = useState<number | undefined>(undefined);
+  const [dirty, setDirty] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const modelRef = useRef<Model | null>(null);
 
   const repository = useMemo<ModelRepository>(
@@ -159,6 +167,7 @@ export default function App() {
     const next = updater(current);
     modelRef.current = next;
     setModel(next);
+    setDirty(true);
   }, []);
 
   const undo = useCallback(() => {
@@ -169,6 +178,7 @@ export default function App() {
     setFuture((history) => [current, ...history].slice(0, 60));
     modelRef.current = previous;
     setModel(previous);
+    setDirty(true);
   }, [past]);
 
   const redo = useCallback(() => {
@@ -179,6 +189,7 @@ export default function App() {
     setPast((history) => [...history, current].slice(-60));
     modelRef.current = next;
     setModel(next);
+    setDirty(true);
   }, [future]);
 
   useEffect(() => {
@@ -245,6 +256,8 @@ export default function App() {
           await syncVersion(requested);
           setRoute('workspace');
           setReadOnly(false);
+          setDirty(false);
+          setLastSavedAt(target.updatedAt ?? null);
           const requestedTab = new URLSearchParams(window.location.search).get('tab');
           if (requestedTab && PRIMARY_TABS.includes(requestedTab as Tab)) {
             setTab(requestedTab as Tab);
@@ -298,6 +311,8 @@ export default function App() {
     setPast([]);
     setFuture([]);
     setReadOnly(false);
+    setDirty(false);
+    setLastSavedAt(next.updatedAt ?? null);
     window.history.replaceState(
       null,
       '',
@@ -311,6 +326,8 @@ export default function App() {
     modelRef.current = null;
     setSelectedElementId(null);
     setPendingImport(null);
+    setDirty(false);
+    setLastSavedAt(null);
     window.history.replaceState(null, '', window.location.pathname);
     void refreshWorkspaces();
   };
@@ -365,22 +382,38 @@ export default function App() {
     notify('Workspace deleted');
   };
 
-  const save = async () => {
-    if (!model || readOnly) return;
-    try {
-      await repository.saveModel(model, modelVersion);
-      await syncVersion(model.id);
-      await refreshWorkspaces();
-      notify('Workspace saved');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/conflict/i.test(message)) {
-        notify('Save rejected: someone else changed this workspace. Reload to get their changes.');
-      } else {
-        notify(`Save failed: ${message}`);
+  const save = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      const current = modelRef.current;
+      if (!current || readOnly) return;
+      try {
+        await repository.saveModel(current, modelVersion);
+        await syncVersion(current.id);
+        await refreshWorkspaces();
+        setDirty(false);
+        setLastSavedAt(new Date().toISOString());
+        if (!options.silent) notify('Workspace saved');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/conflict/i.test(message)) {
+          notify('Save rejected: someone else changed this workspace. Reload to get their changes.');
+        } else {
+          notify(`Save failed: ${message}`);
+        }
       }
-    }
-  };
+    },
+    [readOnly, repository, modelVersion, syncVersion, refreshWorkspaces, notify],
+  );
+
+  // Autosave: debounced save a moment after the last edit, so a crash or a
+  // closed tab no longer loses work.
+  useEffect(() => {
+    if (!dirty || readOnly || !modelRef.current) return;
+    const timer = window.setTimeout(() => {
+      void save({ silent: true });
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [dirty, model, readOnly, save]);
 
   const importFile = async (file: File) => {
     try {
@@ -602,6 +635,32 @@ export default function App() {
     }));
   };
 
+  // Canvas delete: node/edge ids are resolved to element/relationship refs and
+  // removed from the canonical model, so deletions survive re-renders.
+  const deleteNodes = (nodeIds: string[]) => {
+    const current = modelRef.current;
+    if (!current) return;
+    const elementIds = elementRefsForNodes(current, nodeIds);
+    if (!elementIds.length) return;
+    commit((model) => removeElements(model, elementIds));
+    setSelectedElementId((selected) => (selected && elementIds.includes(selected) ? null : selected));
+    notify(`Deleted ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
+  };
+
+  const deleteEdges = (edgeIds: string[]) => {
+    const current = modelRef.current;
+    if (!current) return;
+    const relationshipIds = relationshipRefsForEdges(current, edgeIds);
+    if (!relationshipIds.length) return;
+    commit((model) => removeRelationships(model, relationshipIds));
+    notify(`Deleted ${relationshipIds.length} relationship${relationshipIds.length === 1 ? '' : 's'}`);
+  };
+
+  const bulkAssign = (elementIds: string[], patch: { domain?: string; environment?: string }) => {
+    commit((model) => assignElements(model, elementIds, patch));
+    notify(`Updated ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
+  };
+
   const updateModelMeta = (patch: Partial<Model>) => {
     commit((current) => ({ ...current, ...patch }));
   };
@@ -762,7 +821,7 @@ export default function App() {
           onExportArchi={exportArchiFile}
           onExportReport={exportReport}
           onShare={share}
-          onSave={save}
+          onSave={() => void save()}
         />
 
         <main className="main">
@@ -781,12 +840,22 @@ export default function App() {
               <span className="model-title">{model ? primaryText(model.name) : 'No workspace'}</span>
               {readOnly && <span className="mode-badge">read-only</span>}
               <span className="mode-badge">{mode}</span>
+              {!readOnly && model && (
+                <span className={`save-badge ${dirty ? 'dirty' : ''}`} title={lastSavedAt ?? undefined}>
+                  {dirty
+                    ? '● Unsaved changes'
+                    : lastSavedAt
+                      ? `✓ Saved ${new Date(lastSavedAt).toLocaleTimeString()}`
+                      : '✓ Saved'}
+                </span>
+              )}
               <span className="status" title={status}>{status}</span>
             </div>
           </header>
 
           <div className="content">
             <div className="workspace">
+              <ErrorBoundary key={tab} name={tab}>
               {!model ? (
                 <div className="placeholder">
                   <h2>No workspace open</h2>
@@ -856,6 +925,9 @@ export default function App() {
                       onNodeMove={moveNode}
                       onAddElement={addElement}
                       onConnect={requestConnection}
+                      onNodesDelete={deleteNodes}
+                      onEdgesDelete={deleteEdges}
+                      onBulkAssign={bulkAssign}
                     />
                   </div>
                   {magic && (
@@ -992,6 +1064,7 @@ export default function App() {
                   repository={repository instanceof ServerRepository ? repository : null}
                 />
               )}
+              </ErrorBoundary>
             </div>
 
             {model && (tab === 'editor' || tab === 'catalog' || tab === 'analysis') && (

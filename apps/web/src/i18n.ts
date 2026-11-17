@@ -47,6 +47,10 @@ export const translations = {
     domain: 'Domain',
     environment: 'Environment',
     domains: 'Domains',
+    delete: 'Delete',
+    selected: 'selected',
+    noDomain: 'No domain',
+    noEnvironment: 'No environment',
   },
   nb: {
     editor: 'Editor',
@@ -92,6 +96,10 @@ export const translations = {
     domain: 'Domene',
     environment: 'Miljø',
     domains: 'Domener',
+    delete: 'Slett',
+    selected: 'valgt',
+    noDomain: 'Intet domene',
+    noEnvironment: 'Intet miljø',
   },
 } as const;
 

@@ -1,5 +1,6 @@
 import { getElementType } from './metamodel';
 import type {
+  ArchiElement,
   Artefact,
   ArtefactKind,
   Domain,
@@ -85,6 +86,84 @@ export function filterModelByDomain(model: Model, domainId: string | 'all'): Mod
     return { ...view, nodes, edges };
   });
   return { ...model, elements, relationships, views };
+}
+
+/** Resolve view node ids to the elements they show (label/group nodes are skipped). */
+export function elementRefsForNodes(model: Model, nodeIds: string[]): string[] {
+  const ids = new Set(nodeIds);
+  const refs = new Set<string>();
+  for (const view of model.views) {
+    for (const node of view.nodes) {
+      if (ids.has(node.id) && node.elementRef) refs.add(node.elementRef);
+    }
+  }
+  return [...refs];
+}
+
+/** Resolve view edge ids to the relationships they show. */
+export function relationshipRefsForEdges(model: Model, edgeIds: string[]): string[] {
+  const ids = new Set(edgeIds);
+  const refs = new Set<string>();
+  for (const view of model.views) {
+    for (const edge of view.edges) {
+      if (ids.has(edge.id)) refs.add(edge.relationshipRef);
+    }
+  }
+  return [...refs];
+}
+
+/**
+ * Delete elements from the canonical model: the elements themselves, every
+ * relationship that touches them, all view nodes/edges that referenced them,
+ * and artefact links to them. Keeps validation free of dangling references.
+ */
+export function removeElements(model: Model, elementIds: string[]): Model {
+  const ids = new Set(elementIds);
+  if (!model.elements.some((element) => ids.has(element.id))) return model;
+  const elements = model.elements.filter((element) => !ids.has(element.id));
+  const relationships = model.relationships.filter(
+    (relationship) => !ids.has(relationship.source) && !ids.has(relationship.target),
+  );
+  const relationshipIds = new Set(relationships.map((relationship) => relationship.id));
+  const views = model.views.map((view) => {
+    const nodes = view.nodes.filter((node) => !node.elementRef || !ids.has(node.elementRef));
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = view.edges.filter(
+      (edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target) && relationshipIds.has(edge.relationshipRef),
+    );
+    return { ...view, nodes, edges };
+  });
+  const artefacts = (model.artefacts ?? []).map((artefact) => ({
+    ...artefact,
+    elementIds: artefact.elementIds.filter((id) => !ids.has(id)),
+  }));
+  return { ...model, elements, relationships, views, artefacts };
+}
+
+/** Delete relationships and every view edge that showed them. */
+export function removeRelationships(model: Model, relationshipIds: string[]): Model {
+  const ids = new Set(relationshipIds);
+  if (!model.relationships.some((relationship) => ids.has(relationship.id))) return model;
+  const relationships = model.relationships.filter((relationship) => !ids.has(relationship.id));
+  const views = model.views.map((view) => ({
+    ...view,
+    edges: view.edges.filter((edge) => !ids.has(edge.relationshipRef)),
+  }));
+  return { ...model, relationships, views };
+}
+
+/** Bulk-assign a patch (e.g. domain/environment) to many elements at once. */
+export function assignElements(
+  model: Model,
+  elementIds: string[],
+  patch: Partial<Pick<ArchiElement, 'domain' | 'environment'>>,
+): Model {
+  const ids = new Set(elementIds);
+  if (!model.elements.some((element) => ids.has(element.id))) return model;
+  return {
+    ...model,
+    elements: model.elements.map((element) => (ids.has(element.id) ? { ...element, ...patch } : element)),
+  };
 }
 
 export interface DomainStat {

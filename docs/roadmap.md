@@ -262,11 +262,12 @@ tools retain the information; AOEF import maps them back.
 | **5** | **Scale & ecosystem** | OIDC/SCIM, Jira/Confluence, CMDB read-only, standards packs, multi-workspace portfolio, marketplace | Enterprise deployment and ecosystem |
 | **6** | **Trust & daily use** | Autosave, error boundary, version history + restore, conflict UI, E2E tests, i18n completion, accessibility, performance, bundle splitting | A tool people trust with real work every day |
 | **7** | **Workflow stickiness** | IaC drift detection, Git-native workspaces, command palette, global search, bulk edit, onboarding, dark mode | A tool people reopen every week |
+| **7A** | **Drawing depth** (runs alongside 6–7) | Canvas delete synced to the model, multi-select + bulk assign, copy/paste/duplicate, align/distribute, snap-to-grid, bendpoints, on-canvas labels, containers, z-order, context menu, palette drag-and-drop, presentation mode — see §12 | The canvas feels like a dedicated diagramming tool, not a form |
 | **8** | **Enterprise & ecosystem** | OIDC end-to-end, governance UI, DOCX/PPTX/Confluence reporting, Jira/Confluence/CMDB connectors, SCIM, value streams, C4 bridge, ArchiMate 4.0, marketplace | A platform an organisation can standardise on |
 
 Phases 2 and 3 can run in parallel; Phase 4 depends on Phase 1 (workspaces, domains, baselines).
-Phases 6 and 7 should run before more Phase 8 breadth: trust and repeat use matter more than
-another connector.
+Phases 6, 7, and 7A should run before more Phase 8 breadth: trust, repeat use, and drawing depth
+matter more than another connector.
 
 ### Implementation status (2026-11-17)
 
@@ -277,8 +278,9 @@ another connector.
 | **3. Archi/ArchiMate depth** | 🟡 Partial | `.archimate` import/export (ZIP), AOEF conformance, viewpoints library | ArchiMate 4.0 registry, Git sync UI, merge review UI, scripting sandbox |
 | **4. TOGAF & enterprise** | 🟡 Mostly done | TOGAF Architecture Vision template, capability tree, portfolio fields + TIME, baseline approvals, Markdown/HTML reports, OIDC/RS256 via JWKS, standards packs, SIEM webhook | Value-stream view, DOCX/PPTX/Confluence publishing, Jira/Confluence connectors, CMDB, SCIM |
 | **5. Scale & ecosystem** | 🟡 Partial | Cross-workspace portfolio, templates gallery | Marketplace, SCIM, multi-tenant hierarchy |
-| **6. Trust & daily use** | ⏳ Planned | — | Autosave, error boundary, version history, conflict UI, E2E, i18n, accessibility, performance |
+| **6. Trust & daily use** | 🟡 In progress | Debounced autosave + saved/unsaved badge, per-tab error boundary | Version history, conflict UI, E2E, i18n, accessibility, performance |
 | **7. Workflow stickiness** | ⏳ Planned | — | IaC drift, Git-native workspaces, command palette, search, bulk edit, onboarding |
+| **7A. Drawing depth** | 🟡 In progress | Canvas delete synced to the model (`onNodesDelete`/`onEdgesDelete` → `removeElements`/`removeRelationships`), multi-select + bulk domain/environment assignment | Copy/paste/duplicate, align/distribute, snap-to-grid, bendpoints, on-canvas labels, containers, z-order, context menu, palette drag-and-drop, presentation mode |
 | **8. Enterprise & ecosystem** | ⏳ Planned | — | OIDC end-to-end, governance UI, reporting, connectors, SCIM, value streams, C4, ArchiMate 4.0 |
 
 The remaining items in Phases 2–5 are integration-heavy (external systems) or require a larger
@@ -369,7 +371,43 @@ link elements to delivery work.
 
 ---
 
-## 12. Compatibility strategy
+## 12. Phase 7A detail — drawing depth (active priority)
+
+**Goal:** the canvas feels like a dedicated diagramming tool. The status document
+(`docs/status-2026-11-17.md` §3.A) calls this the biggest remaining gap: the biggest gap is no
+longer features — it is drawing depth.
+
+Already shipped on `feat/drawing-depth-trust`:
+
+1. **Delete synced to the model** — `onNodesDelete`/`onEdgesDelete` resolve node/edge ids to
+   element/relationship refs and remove them via `removeElements`/`removeRelationships`
+   (`packages/core/src/workspace.ts`), which also prune view nodes/edges, touching relationships,
+   and artefact links. Regression tests in `workspace-editing.test.ts`.
+2. **Multi-select + bulk actions** — Shift-click multi-select, Delete/Backspace removes the
+   selection, and a selection bar bulk-assigns domain/environment to all selected elements.
+3. **Autosave** — debounced save 1.5 s after the last edit, saved/unsaved badge in the top bar
+   (Phase 6 item 1).
+4. **Error boundary per tab** — a render error shows a recoverable panel; the model stays in
+   memory (Phase 6 item 2).
+
+Remaining, in order:
+
+5. Copy/paste/duplicate (clipboard of element subgraphs, including internal relationships).
+6. Align/distribute (left/center/right/top/middle/bottom, horizontal/vertical distribute).
+7. Snap-to-grid + alignment guides while dragging.
+8. Edge bendpoints and reconnection (drag edge ends to another node).
+9. On-canvas label editing (double-click to rename).
+10. Containers/nested nodes, z-order controls (bring forward/send backward).
+11. Context menu + keyboard shortcuts (documented); drag-and-drop from the palette onto the canvas.
+12. Comments anchored to elements; presentation mode for sharing a view.
+
+**Definition of done:** a new user can create a workspace, draw and connect elements, delete them,
+bulk-assign a domain, reload without losing work, and export a valid AOEF file — with an E2E test
+proving it, and the diagram survives a round-trip looking the way the user left it.
+
+---
+
+## 13. Compatibility strategy
 
 | Concern | Decision |
 |---|---|
@@ -382,7 +420,7 @@ link elements to delivery work.
 
 ---
 
-## 13. Success metrics
+## 14. Success metrics
 
 | Tier | Metric | Target |
 |---|---|---|
@@ -399,7 +437,7 @@ link elements to delivery work.
 
 ---
 
-## 14. Risks and decisions
+## 15. Risks and decisions
 
 | Risk | Mitigation |
 |---|---|
@@ -413,7 +451,7 @@ link elements to delivery work.
 
 ---
 
-## 15. Immediate backlog
+## 16. Immediate backlog
 
 | Order | Item | Phase | Status |
 |---|---|---|---|
@@ -427,12 +465,17 @@ link elements to delivery work.
 | 8 | IaC import (Terraform + Kubernetes + compose) | 2 | ✅ |
 | 9 | Environment overlays | 2 | ✅ |
 | 10 | `openarch check` + PR workflow | 2 | ✅ |
-| 11 | C4 / Structurizr bridge | 2 | Next |
-| 12 | ArchiMate 4.0 registry | 3 | Next |
-| 13 | Git sync UI (clone/pull/commit/push) | 3 | Next |
-| 14 | Value-stream view | 4 | Next |
-| 15 | DOCX/PPTX and Confluence publishing | 4 | Later |
-| 16 | Jira / Confluence / ServiceNow connectors | 4–5 | Later |
+| 11 | Canvas delete synced to model + multi-select bulk assign | 7A | ✅ `feat/drawing-depth-trust` |
+| 12 | Autosave + saved/unsaved badge + per-tab error boundary | 6 | ✅ `feat/drawing-depth-trust` |
+| 13 | Playwright E2E: create → add → connect → delete → bulk-assign → reload → export AOEF | 6/7A | Next |
+| 14 | Drawing polish: copy/paste, align/distribute, snap, bendpoints, on-canvas labels | 7A | Next |
+| 15 | Containers, z-order, context menu, palette drag-and-drop, presentation mode | 7A | Later |
+| 16 | C4 / Structurizr bridge | 2 | Next |
+| 17 | ArchiMate 4.0 registry | 3 | Next |
+| 18 | Git sync UI (clone/pull/commit/push) | 3 | Next |
+| 19 | Value-stream view | 4 | Next |
+| 20 | DOCX/PPTX and Confluence publishing | 4 | Later |
+| 21 | Jira / Confluence / ServiceNow connectors | 4–5 | Later |
 
 ---
 

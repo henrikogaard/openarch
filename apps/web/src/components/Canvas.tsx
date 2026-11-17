@@ -173,6 +173,9 @@ interface CanvasProps {
   onNodeMove: (nodeId: string, bounds: Bounds) => void;
   onAddElement: (type: string) => void;
   onConnect: (sourceNodeId: string, targetNodeId: string) => void;
+  onNodesDelete: (nodeIds: string[]) => void;
+  onEdgesDelete: (edgeIds: string[]) => void;
+  onBulkAssign: (elementIds: string[], patch: { domain?: string; environment?: string }) => void;
 }
 
 export default function Canvas({
@@ -187,6 +190,9 @@ export default function Canvas({
   onNodeMove,
   onAddElement,
   onConnect,
+  onNodesDelete,
+  onEdgesDelete,
+  onBulkAssign,
 }: CanvasProps) {
   const t = useTranslation();
   const initialNodes = useMemo(
@@ -198,6 +204,8 @@ export default function Canvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
 
   useEffect(() => setNodes(initialNodes), [initialNodes, setNodes]);
   useEffect(() => setEdges(initialEdges), [initialEdges, setEdges]);
@@ -205,6 +213,21 @@ export default function Canvas({
   const matches = ELEMENT_TYPES.filter((type) =>
     `${type.label} ${type.id}`.toLowerCase().includes(query.toLowerCase()),
   );
+
+  const selectedElementIds = useMemo(
+    () =>
+      nodes
+        .filter((node) => selectedNodeIds.includes(node.id))
+        .map((node) => (node.data as ArchiNodeData).elementId)
+        .filter((id): id is string => Boolean(id)),
+    [nodes, selectedNodeIds],
+  );
+  const selectionCount = selectedNodeIds.length + selectedEdgeIds.length;
+
+  const deleteSelection = () => {
+    if (selectedNodeIds.length) onNodesDelete(selectedNodeIds);
+    if (selectedEdgeIds.length) onEdgesDelete(selectedEdgeIds);
+  };
 
   return (
     <div className="canvas-wrap">
@@ -214,6 +237,14 @@ export default function Canvas({
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        deleteKeyCode={['Backspace', 'Delete']}
+        multiSelectionKeyCode="Shift"
+        onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) => {
+          setSelectedNodeIds(selectedNodes.map((node) => node.id));
+          setSelectedEdgeIds(selectedEdges.map((edge) => edge.id));
+        }}
+        onNodesDelete={(deleted) => onNodesDelete(deleted.map((node) => node.id))}
+        onEdgesDelete={(deleted) => onEdgesDelete(deleted.map((edge) => edge.id))}
         onConnect={(connection: Connection) => {
           if (connection.source && connection.target) onConnect(connection.source, connection.target);
         }}
@@ -277,8 +308,55 @@ export default function Canvas({
           )}
         </Panel>
         <Panel position="top-right" className="canvas-hint">
-          Drag a handle between elements to connect · valid relationship types are suggested
+          Drag a handle between elements to connect · valid relationship types are suggested · Shift-click to
+          multi-select · Delete removes the selection from the model
         </Panel>
+        {selectionCount > 0 && (
+          <Panel position="bottom-center" className="selection-bar">
+            <strong>
+              {selectionCount} {t('selected')}
+            </strong>
+            <button onClick={deleteSelection}>{t('delete')}</button>
+            {selectedElementIds.length > 0 && (
+              <>
+                <label>
+                  {t('domain')}
+                  <select
+                    value=""
+                    aria-label={`Set domain for ${selectedElementIds.length} elements`}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      onBulkAssign(selectedElementIds, { domain: value || undefined });
+                    }}
+                  >
+                    <option value="">{t('noDomain')}</option>
+                    {domains.map((domain) => (
+                      <option key={domain.id} value={domain.id}>
+                        {domain.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {t('environment')}
+                  <select
+                    value=""
+                    aria-label={`Set environment for ${selectedElementIds.length} elements`}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      onBulkAssign(selectedElementIds, { environment: value || undefined });
+                    }}
+                  >
+                    <option value="">{t('noEnvironment')}</option>
+                    <option value="dev">dev</option>
+                    <option value="staging">staging</option>
+                    <option value="prod">prod</option>
+                  </select>
+                </label>
+              </>
+            )}
+          </Panel>
+        )}
       </ReactFlow>
     </div>
   );

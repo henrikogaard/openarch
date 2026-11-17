@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { createSampleModel, validateModel } from '@openarch/core';
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Catalog from './Catalog';
 import Dashboard from './Dashboard';
 import EamViews from './EamViews';
+import ErrorBoundary from './ErrorBoundary';
 import Inspector from './Inspector';
 import MatrixView from './MatrixView';
 import ValidationPanel from './ValidationPanel';
@@ -124,5 +125,29 @@ describe('analysis components render the model', () => {
     );
     expect(screen.getByText('Claims Portal')).toBeTruthy();
     expect(screen.getByText('Application Component')).toBeTruthy();
+  });
+});
+
+describe('ErrorBoundary', () => {
+  it('shows a recoverable panel when a child throws, and recovers on retry', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let shouldThrow = true;
+    const MaybeThrow = () => {
+      if (shouldThrow) throw new Error('boom');
+      return <div>recovered</div>;
+    };
+    render(
+      <ErrorBoundary name="editor">
+        <MaybeThrow />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(screen.getByText(/boom/)).toBeTruthy();
+    expect(screen.getByText(/editor/)).toBeTruthy();
+
+    shouldThrow = false;
+    fireEvent.click(screen.getByText('Try again'));
+    expect(screen.getByText('recovered')).toBeTruthy();
+    vi.restoreAllMocks();
   });
 });

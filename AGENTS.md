@@ -41,7 +41,8 @@ options — never forked metamodels.
 - **135 tests** across 16 files; typecheck and build pass; 0 dependency vulnerabilities.
 - **8 packages**: `core`, `ai`, `enrichment`, `iac`, `archi`, `reporting`, `repository`, `exporters`.
 - **4 apps**: `web` (React + XYFlow), `server` (Fastify), `cli`, `mcp`.
-- **Working tree is uncommitted.** Only the initial commit exists. See §10 before transferring.
+- **Committed and pushed** (`8c45f61` on `origin/main`). New work goes on a named feature branch
+  in its own worktree under `.claude/worktrees/` (git-ignored). See §10 before transferring.
 - Servers may be running on `:5173` (Vite) and `:8080` (API + built app).
 
 Shipped: workspaces, domains, environments, editor, magic connector, **stakeholder viewpoints with
@@ -176,9 +177,11 @@ When fixing a bug, add a regression test. When changing the metamodel, update
 
 ## 9. Known gotchas
 
-1. **Canvas deletion is not wired to the model.** `Canvas.tsx` has no `onNodesDelete` /
-   `onEdgesDelete`. Fix this before trusting delete.
-2. **No autosave.** Saving is explicit.
+1. ~~Canvas deletion not wired to the model.~~ Fixed: `onNodesDelete`/`onEdgesDelete` in
+   `Canvas.tsx` remove elements/relationships from the model via `removeElements` /
+   `removeRelationships` in `packages/core/src/workspace.ts` (tests: `workspace-editing.test.ts`).
+2. ~~No autosave.~~ Fixed: debounced autosave (1.5 s) with a saved/unsaved badge in `App.tsx`;
+   explicit Save still available.
 3. **`.archimate` is best-effort** — icons/styling are dropped.
 4. **IaC mapping is heuristic** — review before applying.
 5. **OIDC is unit-tested, not live-tested.**
@@ -226,14 +229,15 @@ After transfer: `npm install && npm test && npm run dev`.
 
 ## 11. First task
 
-Follow the two-week sprint in `docs/status-2026-11-17.md` §5. Start with:
+Follow the two-week sprint in `docs/status-2026-11-17.md` §5 and the drawing-depth track
+(Phase 7A) in `docs/roadmap.md` §12. Done already: commit/push (`8c45f61`), canvas delete synced
+to the model, multi-select + bulk assign, autosave, error boundary (branch
+`feat/drawing-depth-trust`). Next:
 
-1. **Commit and push** (blocking).
-2. **Fix canvas delete** — add `onNodesDelete`/`onEdgesDelete` that remove the element/relationship
-   from the model via `commit`, and add a test.
-3. **Multi-select + bulk domain/environment assignment.**
-4. **Autosave + error boundary.**
-5. **Playwright smoke test**: create workspace → add element → connect → save → export AOEF.
+1. **Playwright smoke test**: create workspace → add element → connect → delete → bulk-assign →
+   reload → export AOEF.
+2. **Drawing polish**: copy/paste/duplicate, align/distribute, snap-to-grid, bendpoints,
+   on-canvas labels, containers, z-order, context menu, palette drag-and-drop.
 
 **Definition of done for this sprint:** a new user can create a workspace, draw and connect
 elements, delete them, bulk-assign a domain, reload without losing work, and export a valid AOEF
