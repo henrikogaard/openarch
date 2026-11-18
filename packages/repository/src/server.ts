@@ -16,7 +16,22 @@ export class ServerRepository implements ModelRepository {
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, init);
     if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        currentVersion?: number;
+        current?: Model;
+      };
+      if (response.status === 409) {
+        // Optimistic-locking conflict: expose the server's version and model
+        // so the UI can offer a theirs-vs-yours review.
+        const conflict = new Error(body.error ?? 'Conflict: workspace changed') as Error & {
+          currentVersion?: number;
+          current?: Model;
+        };
+        conflict.currentVersion = body.currentVersion;
+        conflict.current = body.current;
+        throw conflict;
+      }
       throw new Error(body.error ?? `Server request failed: ${response.status} ${response.statusText}`);
     }
     return (await response.json()) as T;
@@ -103,5 +118,19 @@ export class ServerRepository implements ModelRepository {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ label }),
     });
+  }
+
+  async getSnapshot(id: string, snapshotId: string): Promise<Model> {
+    const snapshot = await this.request<{ model: Model }>(
+      `/models/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}`,
+    );
+    return snapshot.model;
+  }
+
+  restoreSnapshot(id: string, snapshotId: string): Promise<Model> {
+    return this.request(
+      `/models/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}/restore`,
+      { method: 'POST' },
+    ) as Promise<Model>;
   }
 }

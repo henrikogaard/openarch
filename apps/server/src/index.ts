@@ -309,6 +309,18 @@ app.put('/api/models/:id', async (request, reply) => {
   workspace.version += 1;
   workspace.updatedAt = new Date().toISOString();
   workspace.updatedBy = actor.subject;
+  // Keep a rolling version history (newest last, capped).
+  workspace.snapshots ??= [];
+  workspace.snapshots.push({
+    id: `snapshot-${crypto.randomUUID()}`,
+    version: workspace.version,
+    createdAt: workspace.updatedAt,
+    label: `Revision ${workspace.version}`,
+    model: structuredClone(model),
+  });
+  if (workspace.snapshots.length > 50) {
+    workspace.snapshots.splice(0, workspace.snapshots.length - 50);
+  }
   audit(
     workspace,
     workspace.updatedBy,
@@ -409,6 +421,35 @@ app.post('/api/models/:id/snapshots', async (request, reply) => {
   persistToDisk();
   const { model: _model, ...metadata } = snapshot;
   return reply.code(201).send(metadata);
+});
+
+app.get('/api/models/:id/snapshots/:snapshotId', async (request, reply) => {
+  const { id, snapshotId } = request.params as { id: string; snapshotId: string };
+  const workspace = workspaces.get(id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  if (!requireMember(request, reply, workspace)) return;
+  const snapshot = workspace.snapshots.find((candidate) => candidate.id === snapshotId);
+  if (!snapshot) return reply.code(404).send({ error: 'Snapshot not found' });
+  return snapshot;
+});
+
+app.post('/api/models/:id/snapshots/:snapshotId/restore', async (request, reply) => {
+  const { id, snapshotId } = request.params as { id: string; snapshotId: string };
+  const workspace = workspaces.get(id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner', 'editor']);
+  if (!actor) return;
+  const snapshot = workspace.snapshots.find((candidate) => candidate.id === snapshotId);
+  if (!snapshot) return reply.code(404).send({ error: 'Snapshot not found' });
+  workspace.model = structuredClone(snapshot.model);
+  workspace.model.id = id;
+  workspace.version += 1;
+  workspace.updatedAt = new Date().toISOString();
+  workspace.updatedBy = actor.subject;
+  audit(workspace, actor.subject, 'restore', `Restored ${snapshot.label} as revision ${workspace.version}`);
+  persistToDisk();
+  reply.header('x-model-version', String(workspace.version));
+  return workspace.model;
 });
 
 // ── Saved views ──────────────────────────────────────────────────────────────

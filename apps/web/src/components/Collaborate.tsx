@@ -1,10 +1,12 @@
-import { primaryText, type AuditEvent, type Comment } from '@openarch/core';
+import { diffModels, primaryText, type AuditEvent, type Comment, type Model, type ModelDiff } from '@openarch/core';
 import { type ServerRepository } from '@openarch/repository';
 import { useCallback, useEffect, useState } from 'react';
 
 interface CollaborateProps {
   modelId: string;
+  model: Model;
   repository: ServerRepository | null;
+  onRestore: (model: Model) => void;
 }
 
 interface SnapshotMeta {
@@ -14,13 +16,15 @@ interface SnapshotMeta {
   label: string;
 }
 
-export default function Collaborate({ modelId, repository }: CollaborateProps) {
+export default function Collaborate({ modelId, model, repository, onRestore }: CollaborateProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [diff, setDiff] = useState<Record<string, unknown> | null>(null);
+  const [snapshotDiffs, setSnapshotDiffs] = useState<Record<string, ModelDiff>>({});
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
 
   const refresh = useCallback(async () => {
     if (!repository) return;
@@ -71,6 +75,40 @@ export default function Collaborate({ modelId, repository }: CollaborateProps) {
     await refresh();
   };
 
+  const showDiff = async (snapshot: SnapshotMeta) => {
+    if (snapshotDiffs[snapshot.id]) {
+      setSnapshotDiffs((current) => {
+        const next = { ...current };
+        delete next[snapshot.id];
+        return next;
+      });
+      return;
+    }
+    setBusy(snapshot.id);
+    try {
+      const snapshotModel = await repository.getSnapshot(modelId, snapshot.id);
+      setSnapshotDiffs((current) => ({ ...current, [snapshot.id]: diffModels(model, snapshotModel) }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const restore = async (snapshot: SnapshotMeta) => {
+    if (!window.confirm(`Restore "${snapshot.label}"? Your current unsaved view of the model is replaced.`)) return;
+    setBusy(snapshot.id);
+    try {
+      const restored = await repository.restoreSnapshot(modelId, snapshot.id);
+      onRestore(restored);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+
   return (
     <div className="page">
       <header className="page-header">
@@ -108,15 +146,31 @@ export default function Collaborate({ modelId, repository }: CollaborateProps) {
         </section>
 
         <section className="panel-card">
-          <h3>Baselines & changes since baseline</h3>
+          <h3>Version history & baselines</h3>
           <ul className="relation-list">
             {snapshots.map((snapshot) => (
               <li key={snapshot.id}>
                 <span className="chip">{snapshot.label}</span>
-                <span className="muted">v{snapshot.version}</span>
+                <span className="muted">
+                  v{snapshot.version} · {new Date(snapshot.createdAt).toLocaleString()}
+                </span>
+                <button className="small-button" disabled={busy === snapshot.id} onClick={() => void showDiff(snapshot)}>
+                  {snapshotDiffs[snapshot.id] ? 'Hide diff' : 'Diff vs current'}
+                </button>
+                <button className="small-button" disabled={busy === snapshot.id} onClick={() => void restore(snapshot)}>
+                  Restore
+                </button>
+                {snapshotDiffs[snapshot.id] && (
+                  <pre className="diff-block">
+                    {Object.entries(snapshotDiffs[snapshot.id])
+                      .filter(([, value]) => Array.isArray(value))
+                      .map(([key, value]) => `${key}: ${(value as unknown[]).length}`)
+                      .join('\n')}
+                  </pre>
+                )}
               </li>
             ))}
-            {snapshots.length === 0 && <li className="empty">No baselines yet.</li>}
+            {snapshots.length === 0 && <li className="empty">No snapshots yet — every server save creates a revision.</li>}
           </ul>
           {diff && (
             <pre className="diff-block">

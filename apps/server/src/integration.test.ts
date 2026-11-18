@@ -140,6 +140,61 @@ describe('server integration', () => {
     expect(current.status).toBe(200);
   });
 
+  it('keeps a version history: saves create snapshots, restore reverts, 409 carries currentVersion', async () => {
+    const model = await json<Record<string, unknown>>('/api/models/sample-model', { headers: admin });
+    expect(model.status).toBe(200);
+    const base = model.body as { elements?: unknown[] };
+
+    // Each save creates a revision snapshot.
+    const save = (body: unknown, version: number) =>
+      json('/api/models/sample-model', {
+        method: 'PUT',
+        headers: { ...admin, 'content-type': 'application/json', 'if-match': String(version) },
+        body: JSON.stringify(body),
+      });
+    const meta1 = await json<{ version: number }>('/api/models/sample-model/meta', { headers: admin });
+    await save(base, meta1.body.version);
+    const meta2 = await json<{ version: number }>('/api/models/sample-model/meta', { headers: admin });
+    const modified = { ...base, elements: [...(base.elements ?? []), { id: 'added', type: 'Node', name: [{ lang: 'en', value: 'Added' }], documentation: [], properties: [] }] };
+    await save(modified, meta2.body.version);
+
+    const snapshots = await json<Array<{ id: string; version: number; label: string }>>(
+      '/api/models/sample-model/snapshots',
+      { headers: admin },
+    );
+    expect(snapshots.status).toBe(200);
+    expect(snapshots.body.length).toBeGreaterThanOrEqual(2);
+    const latest = snapshots.body[snapshots.body.length - 1];
+
+    // Full snapshot fetch returns the model.
+    const full = await json<{ model: { elements?: unknown[] } }>(
+      `/api/models/sample-model/snapshots/${latest.id}`,
+      { headers: admin },
+    );
+    expect(full.status).toBe(200);
+    expect(full.body.model.elements?.some((e) => (e as { id: string }).id === 'added')).toBe(true);
+
+    // Stale write → 409 with currentVersion.
+    const stale = await json<{ error: string; currentVersion: number }>('/api/models/sample-model', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json', 'if-match': String(meta1.body.version) },
+      body: JSON.stringify(modified),
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.body.currentVersion).toBeGreaterThan(meta1.body.version);
+
+    // Restore the earlier snapshot → model loses the added element, version bumps.
+    const earlier = snapshots.body[snapshots.body.length - 2];
+    const restored = await json<{ elements?: unknown[] }>(
+      `/api/models/sample-model/snapshots/${earlier.id}/restore`,
+      { method: 'POST', headers: admin },
+    );
+    expect(restored.status).toBe(200);
+    expect(restored.body.elements?.some((e) => (e as { id: string }).id === 'added')).toBe(false);
+    const meta3 = await json<{ version: number }>('/api/models/sample-model/meta', { headers: admin });
+    expect(meta3.body.version).toBeGreaterThan(meta2.body.version);
+  });
+
   it('persists and deletes saved views', async () => {
     const created = await json<{ id: string }>('/api/models/sample-model/saved-views', {
       method: 'POST',

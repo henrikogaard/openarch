@@ -18,6 +18,11 @@ export interface ModelRepository {
   listSavedViews?(modelId: string): Promise<SavedView[]>;
   saveSavedView?(view: SavedView): Promise<SavedView>;
   deleteSavedView?(modelId: string, viewId: string): Promise<void>;
+  /** Server-mode version history (snapshots). Undefined in local mode. */
+  listSnapshots?(modelId: string): Promise<unknown[]>;
+  getSnapshot?(modelId: string, snapshotId: string): Promise<Model>;
+  restoreSnapshot?(modelId: string, snapshotId: string): Promise<Model>;
+  createSnapshot?(modelId: string, label?: string): Promise<unknown>;
 }
 
 export function summarize(model: Model): ModelSummary {

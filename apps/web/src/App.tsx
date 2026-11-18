@@ -162,6 +162,7 @@ export default function App() {
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [presenting, setPresenting] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [conflict, setConflict] = useState<{ currentVersion?: number; current?: Model } | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     localStorage.getItem('openarch-theme') === 'dark' ? 'dark' : 'light',
   );
@@ -471,11 +472,11 @@ export default function App() {
   };
 
   const save = useCallback(
-    async (options: { silent?: boolean } = {}) => {
+    async (options: { silent?: boolean; forceVersion?: number } = {}) => {
       const current = modelRef.current;
       if (!current || readOnly) return;
       try {
-        await repository.saveModel(current, modelVersion);
+        await repository.saveModel(current, options.forceVersion ?? modelVersion);
         await syncVersion(current.id);
         await refreshWorkspaces();
         setDirty(false);
@@ -491,7 +492,9 @@ export default function App() {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (/conflict/i.test(message)) {
-          notify('Save rejected: someone else changed this workspace. Reload to get their changes.');
+          const conflictError = error as Error & { currentVersion?: number; current?: Model };
+          setConflict({ currentVersion: conflictError.currentVersion, current: conflictError.current });
+          notify('Save conflict: this workspace changed on the server');
         } else {
           notify(`Save failed: ${message}`);
         }
@@ -1423,7 +1426,14 @@ export default function App() {
               ) : (
                 <Collaborate
                   modelId={model.id}
+                  model={model}
                   repository={repository instanceof ServerRepository ? repository : null}
+                  onRestore={(restored) => {
+                    commit(() => restored);
+                    setDirty(false);
+                    void syncVersion(restored.id);
+                    notify('Snapshot restored');
+                  }}
                 />
               )}
               </ErrorBoundary>
@@ -1459,6 +1469,46 @@ export default function App() {
           onClose={() => setPaletteOpen(false)}
           onRun={(item) => item.run()}
         />
+
+        {conflict && model && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Save conflict">
+            <div className="modal">
+              <header className="modal-header">
+                <h2>Save conflict</h2>
+                <button className="icon-button" onClick={() => setConflict(null)} aria-label="Close">
+                  ×
+                </button>
+              </header>
+              <div className="modal-body">
+                <p>
+                  This workspace was changed on the server
+                  {conflict.currentVersion ? ` (now at revision v${conflict.currentVersion})` : ''}. Choose
+                  whether to load their changes or overwrite them with yours.
+                </p>
+              </div>
+              <footer className="modal-footer">
+                <button
+                  onClick={() => {
+                    setConflict(null);
+                    void openWorkspace(model.id);
+                  }}
+                >
+                  Load their changes
+                </button>
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    const version = conflict.currentVersion;
+                    setConflict(null);
+                    void save({ forceVersion: version });
+                  }}
+                >
+                  Overwrite with mine
+                </button>
+              </footer>
+            </div>
+          </div>
+        )}
 
         {showSavedViews && (
           <SavedViews

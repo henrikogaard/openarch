@@ -258,7 +258,7 @@ export interface AuditEvent {
   id: string;
   modelId: string;
   actor: string;
-  action: 'create' | 'update' | 'delete' | 'import' | 'comment';
+  action: 'create' | 'update' | 'delete' | 'import' | 'comment' | 'restore';
   entityId?: string;
   summary: string;
   createdAt: string;
