@@ -3,12 +3,12 @@ import { type Language, useTranslation } from '../i18n';
 
 interface SidebarProps {
   workspaceName: string;
-  mode: 'local' | 'server';
+  mode: 'local' | 'server' | 'git';
   language: Language;
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
   onLanguageChange: (language: Language) => void;
-  onModeChange: (mode: 'local' | 'server') => void;
+  onModeChange: (mode: 'local' | 'server' | 'git') => void;
   onHome: () => void;
   onImport: (file: File) => void;
   onExportAoef: () => void;
@@ -67,6 +67,9 @@ export default function Sidebar({
         </button>
         <button className={mode === 'server' ? 'active' : ''} onClick={() => onModeChange('server')}>
           {t('server')}
+        </button>
+        <button className={mode === 'git' ? 'active' : ''} onClick={() => onModeChange('git')} title="GitHub-backed workspace files">
+          Git
         </button>
       </div>
 

@@ -40,6 +40,8 @@ import {
   type View,
 } from '@openarch/core';
 import {
+  createGitHubFileStore,
+  GitRepository,
   LocalRepository,
   parseNativeModel,
   readShareHash,
@@ -66,6 +68,7 @@ import CommandPalette, { type CommandItem } from './components/CommandPalette';
 import Dashboard from './components/Dashboard';
 import DeploymentView from './components/DeploymentView';
 import ErrorBoundary from './components/ErrorBoundary';
+import GitConfigDialog, { type GitConfig } from './components/GitConfigDialog';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
 import ImportPreview from './components/ImportPreview';
@@ -88,7 +91,7 @@ const Enrichment = lazy(() => import('./components/Enrichment'));
 type Route = 'home' | 'workspace' | 'portfolio';
 type Tab = 'editor' | 'catalog' | 'analysis' | 'views' | 'enrichment' | 'artefacts' | 'collaborate' | 'ai' | 'settings';
 type AnalysisTab = 'dashboard' | 'eam' | 'validation' | 'trace' | 'matrices' | 'deployment' | 'interfaces' | 'domains';
-type Mode = 'local' | 'server';
+type Mode = 'local' | 'server' | 'git';
 
 interface MagicConnection {
   sourceNodeId: string;
@@ -176,10 +179,30 @@ export default function App() {
   const [clipboardCount, setClipboardCount] = useState(0);
   const pasteCountRef = useRef(0);
 
-  const repository = useMemo<ModelRepository>(
-    () => (mode === 'local' ? new LocalRepository() : new ServerRepository(apiUrl)),
-    [mode],
-  );
+  const [gitConfig, setGitConfig] = useState<GitConfig | null>(null);
+  const [gitDialogOpen, setGitDialogOpen] = useState(false);
+
+  const repository = useMemo<ModelRepository>(() => {
+    if (mode === 'server') return new ServerRepository(apiUrl);
+    if (mode === 'git' && gitConfig) {
+      return new GitRepository(
+        createGitHubFileStore({
+          token: gitConfig.token,
+          owner: gitConfig.owner,
+          repo: gitConfig.repo,
+          branch: gitConfig.branch,
+          root: 'architecture',
+        }),
+        'architecture',
+      );
+    }
+    return new LocalRepository();
+  }, [mode, gitConfig]);
+
+  const changeMode = (next: Mode) => {
+    setMode(next);
+    if (next === 'git' && !gitConfig) setGitDialogOpen(true);
+  };
 
   useEffect(() => {
     modelRef.current = model;
@@ -1177,7 +1200,7 @@ export default function App() {
           theme={theme}
           onThemeChange={setTheme}
           onLanguageChange={setLanguage}
-          onModeChange={setMode}
+          onModeChange={changeMode}
           onHome={goHome}
           onImport={importFile}
           onExportAoef={exportAoef}
@@ -1473,6 +1496,21 @@ export default function App() {
           onClose={() => setPaletteOpen(false)}
           onRun={(item) => item.run()}
         />
+
+        {gitDialogOpen && (
+          <GitConfigDialog
+            onConnect={(config) => {
+              setGitConfig(config);
+              setGitDialogOpen(false);
+              setMode('git');
+              notify(`Connected to ${config.owner}/${config.repo}@${config.branch}`);
+            }}
+            onCancel={() => {
+              setGitDialogOpen(false);
+              if (mode === 'git' && !gitConfig) setMode('local');
+            }}
+          />
+        )}
 
         {conflict && model && (
           <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Save conflict">
