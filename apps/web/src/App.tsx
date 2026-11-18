@@ -151,6 +151,7 @@ export default function App() {
   const [snapToGrid, setSnapToGrid] = useState(true);
   const modelRef = useRef<Model | null>(null);
   const clipboardRef = useRef<string[]>([]);
+  const [clipboardCount, setClipboardCount] = useState(0);
   const pasteCountRef = useRef(0);
 
   const repository = useMemo<ModelRepository>(
@@ -242,6 +243,7 @@ export default function App() {
       if (key === 'c' && elementIds.length) {
         event.preventDefault();
         clipboardRef.current = elementIds;
+        setClipboardCount(elementIds.length);
         pasteCountRef.current = 0;
         notify(`Copied ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
       } else if (key === 'v' && clipboardRef.current.length) {
@@ -368,6 +370,7 @@ export default function App() {
     setLastSavedAt(next.updatedAt ?? null);
     setSelectedNodeIds([]);
     clipboardRef.current = [];
+    setClipboardCount(0);
     window.history.replaceState(
       null,
       '',
@@ -732,6 +735,25 @@ export default function App() {
     commit((model) => distributeNodes(model, view.id, selectedNodeIds, axis));
   };
 
+  const renameElement = (id: string, name: string) => {
+    commit((model) => ({
+      ...model,
+      elements: model.elements.map((element) =>
+        element.id === id ? { ...element, name: [{ lang: 'en', value: name }] } : element,
+      ),
+    }));
+  };
+
+  const duplicateNodes = (nodeIds: string[]) => {
+    const current = modelRef.current;
+    if (!current) return;
+    duplicateSelection(elementRefsForNodes(current, nodeIds));
+  };
+
+  const pasteClipboard = () => {
+    if (clipboardRef.current.length) duplicateSelection(clipboardRef.current);
+  };
+
   const updateModelMeta = (patch: Partial<Model>) => {
     commit((current) => ({ ...current, ...patch }));
   };
@@ -1010,6 +1032,10 @@ export default function App() {
                       onDistribute={distributeSelection}
                       snapToGrid={snapToGrid}
                       onSelectionChange={handleCanvasSelection}
+                      onRenameElement={renameElement}
+                      onDuplicateNodes={duplicateNodes}
+                      onPaste={pasteClipboard}
+                      hasClipboard={clipboardCount > 0}
                     />
                   </div>
                   {magic && (

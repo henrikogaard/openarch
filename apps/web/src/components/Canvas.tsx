@@ -195,6 +195,10 @@ interface CanvasProps {
   onDistribute: (axis: 'x' | 'y') => void;
   snapToGrid: boolean;
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void;
+  onRenameElement: (elementId: string, name: string) => void;
+  onDuplicateNodes: (nodeIds: string[]) => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
 }
 
 export default function Canvas({
@@ -215,6 +219,10 @@ export default function Canvas({
   onDistribute,
   snapToGrid,
   onSelectionChange,
+  onRenameElement,
+  onDuplicateNodes,
+  onPaste,
+  hasClipboard,
 }: CanvasProps) {
   const t = useTranslation();
   const initialNodes = useMemo(
@@ -228,6 +236,31 @@ export default function Canvas({
   const [query, setQuery] = useState('');
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  const [editing, setEditing] = useState<{ nodeId: string; x: number; y: number; w: number; value: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string | null } | null>(null);
+
+  const startRename = (nodeId: string) => {
+    const node = nodes.find((candidate) => candidate.id === nodeId);
+    const elementId = node?.data ? (node.data as ArchiNodeData).elementId : undefined;
+    if (!elementId) return;
+    const dom = document.querySelector(`.react-flow__node[data-id="${nodeId}"]`);
+    const box = dom?.getBoundingClientRect();
+    setEditing({
+      nodeId,
+      x: box?.x ?? 0,
+      y: box?.y ?? 0,
+      w: box?.width ?? 170,
+      value: (node?.data as ArchiNodeData).label ?? '',
+    });
+  };
+
+  const commitRename = () => {
+    if (!editing) return;
+    const node = nodes.find((candidate) => candidate.id === editing.nodeId);
+    const elementId = node?.data ? (node.data as ArchiNodeData).elementId : undefined;
+    if (elementId && editing.value.trim()) onRenameElement(elementId, editing.value.trim());
+    setEditing(null);
+  };
 
   // Sync from the model, but keep React Flow's own selection flags so that
   // model commits (align, bulk-assign, …) do not clear the user's selection.
@@ -261,7 +294,7 @@ export default function Canvas({
   };
 
   return (
-    <div className="canvas-wrap">
+    <div className="canvas-wrap" onClick={() => setContextMenu(null)}>
       <ReactFlowProvider>
       <ReactFlow
         nodes={nodes}
@@ -296,6 +329,16 @@ export default function Canvas({
           if (connection.source && connection.target) onConnect(connection.source, connection.target);
         }}
         onNodeClick={(_, node) => onSelectElement((node.data as ArchiNodeData).elementId)}
+        onNodeDoubleClick={(_, node) => startRename(node.id)}
+        onNodeContextMenu={(event, node) => {
+          event.preventDefault();
+          setContextMenu({ x: event.clientX, y: event.clientY, nodeId: node.id });
+        }}
+        onPaneContextMenu={(event) => {
+          event.preventDefault();
+          setContextMenu({ x: event.clientX, y: event.clientY, nodeId: null });
+        }}
+        onPaneClick={() => setContextMenu(null)}
         onNodeDragStop={(_, node) =>
           onNodeMove(node.id, {
             x: Math.round(node.position.x),
@@ -355,8 +398,8 @@ export default function Canvas({
           )}
         </Panel>
         <Panel position="top-right" className="canvas-hint">
-          Drag a handle between elements to connect · Shift-click to multi-select · ⌘/Ctrl+C/V/D copy, paste,
-          duplicate · Delete removes the selection from the model
+          Drag a handle between elements to connect · Shift-click to multi-select · double-click to rename ·
+          right-click for the context menu · ⌘/Ctrl+C/V/D copy, paste, duplicate · Delete removes the selection
         </Panel>
         {selectionCount > 0 && (
           <Panel position="bottom-center" className="selection-bar">
@@ -436,6 +479,66 @@ export default function Canvas({
         )}
         <FitViewOnChange viewId={view.id} />
       </ReactFlow>
+      {editing && (
+        <input
+          className="node-rename-input"
+          style={{ left: editing.x, top: editing.y, width: editing.w }}
+          autoFocus
+          value={editing.value}
+          onChange={(event) => setEditing({ ...editing, value: event.target.value })}
+          onBlur={commitRename}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') commitRename();
+            if (event.key === 'Escape') setEditing(null);
+          }}
+        />
+      )}
+      {contextMenu && (
+        <div
+          className="context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {contextMenu.nodeId ? (
+            <>
+              <button
+                onClick={() => {
+                  startRename(contextMenu.nodeId!);
+                  setContextMenu(null);
+                }}
+              >
+                Rename…
+              </button>
+              <button
+                onClick={() => {
+                  onDuplicateNodes([contextMenu.nodeId!]);
+                  setContextMenu(null);
+                }}
+              >
+                Duplicate
+              </button>
+              <button
+                onClick={() => {
+                  onNodesDelete([contextMenu.nodeId!]);
+                  setContextMenu(null);
+                }}
+              >
+                Delete
+              </button>
+            </>
+          ) : (
+            <button
+              disabled={!hasClipboard}
+              onClick={() => {
+                onPaste();
+                setContextMenu(null);
+              }}
+            >
+              Paste
+            </button>
+          )}
+        </div>
+      )}
       </ReactFlowProvider>
     </div>
   );
