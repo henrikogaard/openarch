@@ -37,6 +37,7 @@ import {
 } from '@openarch/core';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '../i18n';
+import { iconFor } from '../iconPacks';
 
 interface ArchiNodeData extends Record<string, unknown> {
   label: string;
@@ -44,6 +45,8 @@ interface ArchiNodeData extends Record<string, unknown> {
   elementId: string;
   dimmed: boolean;
   attributes: Array<{ key: string; value: string }>;
+  icon?: string;
+  iconColor?: string;
 }
 
 interface LabelNodeData extends Record<string, unknown> {
@@ -68,7 +71,11 @@ function ArchiShape({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Left} id="left" />
       <Handle type="target" position={Position.Top} id="top" />
       {!isGroup && <span className="archi-node-badge">{definition?.letter ?? '?'}</span>}
-      {!isGroup && <span className="archi-node-icon">{definition?.icon ?? ''}</span>}
+      {!isGroup && (
+        <span className="archi-node-icon" style={nodeData.iconColor ? { color: nodeData.iconColor } : undefined}>
+          {nodeData.icon ?? definition?.icon ?? ''}
+        </span>
+      )}
       <span className="archi-node-label">{nodeData.label}</span>
       {!isGroup && <span className="archi-node-type">{definition?.label ?? nodeData.typeId}</span>}
       {!isGroup && nodeData.attributes.length > 0 && (
@@ -157,6 +164,7 @@ function toFlowNodes(
   domains: Domain[],
   visibleLayers: Set<Layer>,
   environmentFilter: string,
+  iconPack: string,
 ): Node[] {
   const byId = new Map(elements.map((element) => [element.id, element]));
   const boundsById = new Map(view.nodes.map((node) => [node.id, node.bounds]));
@@ -185,12 +193,15 @@ function toFlowNodes(
       element && view.config?.attributes?.length
         ? elementAttributes(domains, element, view.config.attributes)
         : [];
+    const packIcon = element ? iconFor(iconPack, element) : undefined;
     const data: ArchiNodeData = {
       label: primaryText(element?.name ?? []) || 'Unnamed element',
       typeId: element?.type ?? 'BusinessActor',
       elementId: node.elementRef,
       dimmed: hiddenLayer || hiddenEnvironment,
       attributes,
+      icon: packIcon?.glyph,
+      iconColor: packIcon?.color,
     };
     // React Flow positions child nodes relative to their parent.
     const parent = node.parentId ? boundsById.get(node.parentId) : undefined;
@@ -274,6 +285,7 @@ interface CanvasProps {
   snapToGrid: boolean;
   fitSignal: number;
   colorMode: 'light' | 'dark';
+  iconPack: string;
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void;
   onRenameElement: (elementId: string, name: string) => void;
   onDuplicateNodes: (nodeIds: string[]) => void;
@@ -315,6 +327,7 @@ function CanvasFlow({
   snapToGrid,
   fitSignal,
   colorMode,
+  iconPack,
   onSelectionChange,
   onRenameElement,
   onDuplicateNodes,
@@ -324,8 +337,8 @@ function CanvasFlow({
   const t = useTranslation();
   const { screenToFlowPosition } = useReactFlow();
   const initialNodes = useMemo(
-    () => toFlowNodes(view, elements, domains, visibleLayers, environmentFilter),
-    [view, elements, domains, visibleLayers, environmentFilter],
+    () => toFlowNodes(view, elements, domains, visibleLayers, environmentFilter, iconPack),
+    [view, elements, domains, visibleLayers, environmentFilter, iconPack],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const initialEdges = useMemo(

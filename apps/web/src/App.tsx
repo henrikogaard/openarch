@@ -71,6 +71,7 @@ import Dashboard from './components/Dashboard';
 import DeploymentView from './components/DeploymentView';
 import ErrorBoundary from './components/ErrorBoundary';
 import GitConfigDialog, { type GitConfig } from './components/GitConfigDialog';
+import { ICON_PACKS } from './iconPacks';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
 import ImportPreview from './components/ImportPreview';
@@ -168,6 +169,7 @@ export default function App() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [presenting, setPresenting] = useState(false);
+  const [iconPack, setIconPack] = useState('archimate');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [conflict, setConflict] = useState<{ currentVersion?: number; current?: Model } | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(() => !localStorage.getItem('openarch-onboarded'));
@@ -1215,6 +1217,7 @@ export default function App() {
       snapToGrid={snapToGrid}
       fitSignal={presenting ? 1 : 0}
       colorMode={theme}
+      iconPack={iconPack}
       onSelectionChange={handleCanvasSelection}
       onRenameElement={renameElement}
       onDuplicateNodes={duplicateNodes}
@@ -1403,6 +1406,16 @@ export default function App() {
                         />
                         {t('snap')}
                       </label>
+                      <select
+                        value={iconPack}
+                        aria-label="Icon pack"
+                        title="Icon pack (view styling only)"
+                        onChange={(event) => setIconPack(event.target.value)}
+                      >
+                        {ICON_PACKS.map((pack) => (
+                          <option key={pack.id} value={pack.id}>{pack.label}</option>
+                        ))}
+                      </select>
                       {LAYER_ORDER.filter((layer) => model.elements.some((element) => getElementType(element.type)?.layer === layer)).map((layer) => (
                         <label key={layer}>
                           <input
