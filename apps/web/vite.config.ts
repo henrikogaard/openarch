@@ -13,7 +13,7 @@ export default defineConfig({
         // own async chunks automatically via React.lazy.
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
-          if (id.includes('react') || id.includes('@xyflow')) return 'vendor-react';
+          if (/node_modules\/(react|react-dom|scheduler|@xyflow)\//.test(id)) return 'vendor-react';
           return 'vendor';
         },
       },
