@@ -128,8 +128,8 @@ describe('analysis components render the model', () => {
     );
     render(<ValueStreams model={withStreams} onSelect={() => {}} />);
     expect(screen.getAllByText('Order to cash').length).toBeGreaterThan(0);
-    expect(screen.getByText('Order received')).toBeTruthy();
-    expect(screen.getByText('Order management')).toBeTruthy();
+    expect(screen.getAllByText('Order received').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Order management').length).toBeGreaterThan(0);
   });
 
   it('shows element details in the inspector', () => {
