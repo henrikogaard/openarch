@@ -278,8 +278,8 @@ matter more than another connector.
 | **3. Archi/ArchiMate depth** | 🟡 Partial | `.archimate` import/export (ZIP), AOEF conformance, viewpoints library | ArchiMate 4.0 registry, Git sync UI, merge review UI, scripting sandbox |
 | **4. TOGAF & enterprise** | 🟡 Mostly done | TOGAF Architecture Vision template, capability tree, portfolio fields + TIME, baseline approvals, Markdown/HTML reports, OIDC/RS256 via JWKS, standards packs, SIEM webhook | Value-stream view, DOCX/PPTX/Confluence publishing, Jira/Confluence connectors, CMDB, SCIM |
 | **5. Scale & ecosystem** | 🟡 Partial | Cross-workspace portfolio, templates gallery | Marketplace, SCIM, multi-tenant hierarchy |
-| **6. Trust & daily use** | 🟡 In progress | Debounced autosave + saved/unsaved badge, per-tab error boundary | Version history, conflict UI, E2E, i18n, accessibility, performance |
-| **7. Workflow stickiness** | ⏳ Planned | — | IaC drift, Git-native workspaces, command palette, search, bulk edit, onboarding |
+| **6. Trust & daily use** | 🟡 In progress | Autosave + saved/unsaved badge, per-tab error boundary, Playwright E2E (6 specs, CI), save-time validation warning, dark mode, bundle split (797→190 KB initial), 2k-element perf smoke | Version history UI, conflict UI, schema migration, backup-all, i18n completion, accessibility pass |
+| **7. Workflow stickiness** | 🟡 In progress | Bulk edit (multi-select ✅), command palette + search (⌘K ✅), dark mode ✅ | IaC drift, Git-native workspaces, onboarding/sample gallery |
 | **7A. Drawing depth** | ✅ Done (anchored comments remain) | Canvas delete synced to the model, multi-select + bulk assign, copy/paste/duplicate, align/distribute, snap-to-grid, on-canvas rename, context menu + shortcuts, edge bendpoints/reconnect, grouping, z-order, palette drag-and-drop, presentation mode — 5 E2E specs green | Comments anchored to elements |
 | **8. Enterprise & ecosystem** | ⏳ Planned | — | OIDC end-to-end, governance UI, reporting, connectors, SCIM, value streams, C4, ArchiMate 4.0 |
 
@@ -339,8 +339,11 @@ E2E suite covers the core flow; the bundle is split; all new strings are transla
    resource, drift badge on the workspace card, and `openarch iac diff --fail-on drift`.
 2. **Git-native workspaces** — open a folder or GitHub repo, save
    `architecture/<workspace>.json`, commit/push, and pull with a diff preview.
-3. **Command palette** — ⌘K across workspaces, domains, elements, views, and actions.
-4. **Global search** — search across every workspace.
+3. ~~**Command palette** — ⌘K across workspaces, domains, elements, views, and actions.~~ ✅
+   `CommandPalette` (fuzzy, arrow/enter/esc); element search covers the open model, workspace
+   search switches workspaces.
+4. **Global search** — search across every workspace (palette covers the open model + workspace
+   names today).
 5. **Bulk edit** — multi-select, assign domain/environment, add properties.
 6. **Drawing polish** — copy/paste/duplicate, align/distribute, snap, bendpoints, on-canvas
    labels, containers, context menu, and keyboard shortcuts.

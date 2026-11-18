@@ -490,6 +490,64 @@ button.active {
   cursor: pointer;
 }
 
+.command-palette {
+  width: min(560px, 92vw);
+  margin: 12vh auto 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px #00000033;
+  overflow: hidden;
+}
+
+.command-input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 12px 14px;
+  font-size: 14px;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+}
+
+.command-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.command-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 8px 10px;
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.command-item.highlighted {
+  background: var(--accent-soft);
+}
+
+.command-group {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.command-empty {
+  padding: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .node-rename-input {
   position: fixed;
   z-index: 1000;

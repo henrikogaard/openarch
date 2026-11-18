@@ -62,6 +62,7 @@ import Artefacts from './components/Artefacts';
 import Canvas from './components/Canvas';
 import Catalog from './components/Catalog';
 import Collaborate from './components/Collaborate';
+import CommandPalette, { type CommandItem } from './components/CommandPalette';
 import Dashboard from './components/Dashboard';
 import DeploymentView from './components/DeploymentView';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -160,6 +161,7 @@ export default function App() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [presenting, setPresenting] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     localStorage.getItem('openarch-theme') === 'dark' ? 'dark' : 'light',
   );
@@ -245,8 +247,17 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && paletteOpen) {
+        setPaletteOpen(false);
+        return;
+      }
       if (!(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
+      if (key === 'k') {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
       if (key === 'z') {
         event.preventDefault();
         if (event.shiftKey) redo();
@@ -275,7 +286,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [undo, redo, selectedNodeIds, duplicateSelection, notify]);
+  }, [undo, redo, selectedNodeIds, duplicateSelection, notify, paletteOpen]);
 
   const refreshWorkspaces = useCallback(async () => {
     try {
@@ -1016,6 +1027,53 @@ export default function App() {
     notify('View regenerated from its recipe');
   };
 
+  // ⌘K palette: workspaces, views, elements of the open model, and actions.
+  const commands: CommandItem[] = [
+    { id: 'cmd-home', group: 'Navigate', label: 'Go to workspace list', run: () => goHome() },
+    { id: 'cmd-portfolio', group: 'Navigate', label: 'Open portfolio', run: () => void openPortfolio() },
+    { id: 'cmd-save', group: 'Actions', label: 'Save workspace', keywords: 'save persist', run: () => void save() },
+    { id: 'cmd-export-aoef', group: 'Actions', label: 'Export AOEF (.xml)', keywords: 'export xml aoef', run: () => exportAoef() },
+    { id: 'cmd-export-json', group: 'Actions', label: 'Export native JSON', keywords: 'export json', run: () => exportJson() },
+    { id: 'cmd-export-svg', group: 'Actions', label: 'Export current view as SVG', keywords: 'export svg image', run: () => exportSvg() },
+    { id: 'cmd-export-png', group: 'Actions', label: 'Export current view as PNG', keywords: 'export png image', run: () => void exportPng() },
+    { id: 'cmd-export-csv', group: 'Actions', label: 'Export elements as CSV', keywords: 'export csv table', run: () => exportCsv() },
+    { id: 'cmd-share', group: 'Actions', label: 'Copy share link', keywords: 'share link url', run: () => void share() },
+    { id: 'cmd-present', group: 'Actions', label: 'Start presentation mode', keywords: 'present slides fullscreen', run: () => setPresenting(true) },
+    {
+      id: 'cmd-theme',
+      group: 'Actions',
+      label: `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`,
+      keywords: 'theme dark light appearance',
+      run: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
+    },
+    ...workspaces.map((workspace) => ({
+      id: `ws-${workspace.id}`,
+      group: 'Workspaces',
+      label: workspace.name,
+      keywords: workspace.tags.join(' '),
+      run: () => void openWorkspace(workspace.id),
+    })),
+    ...(model?.views ?? []).map((view, index) => ({
+      id: `view-${view.id}`,
+      group: 'Views',
+      label: primaryText(view.name) || view.id,
+      run: () => {
+        setActiveViewIndex(index);
+        setTab('editor');
+      },
+    })),
+    ...(model?.elements ?? []).map((element) => ({
+      id: `el-${element.id}`,
+      group: 'Elements',
+      label: `${primaryText(element.name) || element.id} — ${element.type}`,
+      keywords: `${element.type} ${element.domain ?? ''} ${element.environment ?? ''}`,
+      run: () => {
+        setSelectedElementId(element.id);
+        setTab('editor');
+      },
+    })),
+  ];
+
   const selectedElement = model?.elements.find((element) => element.id === selectedElementId);
   const primaryTabs = PRIMARY_TABS;
   const analysisTabs: AnalysisTab[] = ['dashboard', 'eam', 'validation', 'trace', 'matrices', 'deployment', 'interfaces', 'domains'];
@@ -1082,6 +1140,12 @@ export default function App() {
           onImport={importFile}
           onOpenPortfolio={openPortfolio}
         />
+        <CommandPalette
+          open={paletteOpen}
+          items={commands}
+          onClose={() => setPaletteOpen(false)}
+          onRun={(item) => item.run()}
+        />
       </LanguageContext.Provider>
     );
   }
@@ -1090,6 +1154,12 @@ export default function App() {
     return (
       <LanguageContext.Provider value={language}>
         <Portfolio models={portfolioModels} onOpen={openWorkspace} onBack={goHome} />
+        <CommandPalette
+          open={paletteOpen}
+          items={commands}
+          onClose={() => setPaletteOpen(false)}
+          onRun={(item) => item.run()}
+        />
       </LanguageContext.Provider>
     );
   }
@@ -1129,6 +1199,7 @@ export default function App() {
               ))}
             </nav>
             <div className="topbar-right">
+              <button onClick={() => setPaletteOpen(true)} title="Command palette (⌘K)">⌘K</button>
               <button onClick={() => setShowSavedViews(true)} title="Saved views">☆ Views</button>
               {tab === 'editor' && <button onClick={() => setPresenting(true)} title="Presentation mode">▶ Present</button>}
               <button onClick={undo} disabled={past.length === 0} title={t('undo')}>↶</button>
@@ -1381,6 +1452,13 @@ export default function App() {
             onCancel={() => setPendingImport(null)}
           />
         )}
+
+        <CommandPalette
+          open={paletteOpen}
+          items={commands}
+          onClose={() => setPaletteOpen(false)}
+          onRun={(item) => item.run()}
+        />
 
         {showSavedViews && (
           <SavedViews
