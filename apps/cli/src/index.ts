@@ -10,10 +10,11 @@ import {
 import { parseNativeModel, serializeNativeModel } from '@openarch/repository';
 import { exportElementsCsv, exportMermaid } from '@openarch/exporters';
 import { exportArchi, importArchi } from '@openarch/archi';
+import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
 import { checkRules, exportWorkspaceMarkdown, parseRules } from '@openarch/reporting';
 import { diffModels } from './diff';
 
-type Format = 'xml' | 'json' | 'csv' | 'mermaid';
+type Format = 'xml' | 'json' | 'csv' | 'mermaid' | 'dsl';
 
 const HELP = `OpenArch CLI — manage ArchiMate® models
 
@@ -58,18 +59,21 @@ function formatFromPath(filePath: string): Format {
     case '.mermaid':
     case '.mmd':
       return 'mermaid';
+    case '.dsl':
+    case '.structurizr':
+      return 'dsl';
     default:
       throw new Error(
         `Unsupported file extension "${extension || '(none)'}" for "${filePath}". ` +
-          'Expected one of .xml, .json, .csv or .mermaid.',
+          'Expected one of .xml, .json, .csv, .mermaid, .dsl or .archimate.',
       );
   }
 }
 
 function describeFile(filePath: string): string {
   const format = formatFromPath(filePath);
-  if (format !== 'xml' && format !== 'json') {
-    throw new Error(`Cannot read "${filePath}" as a model: expected a .xml or .json file.`);
+  if (format !== 'xml' && format !== 'json' && format !== 'dsl') {
+    throw new Error(`Cannot read "${filePath}" as a model: expected a .xml, .json or .dsl file.`);
   }
   return format;
 }
@@ -91,6 +95,7 @@ async function readModelFile(filePath: string): Promise<Model> {
     throw new Error(`Could not read "${filePath}": ${errorMessage(error)}`);
   }
   try {
+    if (format === 'dsl') return c4ToModel(parseStructurizr(text));
     return format === 'xml' ? parseAoef(text) : parseNativeModel(text);
   } catch (error) {
     throw new Error(`Could not parse "${filePath}" as ${format.toUpperCase()}: ${errorMessage(error)}`);
@@ -105,6 +110,8 @@ function serializeModel(model: Model, format: Format): string {
       return serializeNativeModel(model);
     case 'csv':
       return exportElementsCsv(model);
+    case 'dsl':
+      return modelToC4(model);
     case 'mermaid': {
       const view = model.views[0];
       if (!view) {

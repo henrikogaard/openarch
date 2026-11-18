@@ -58,6 +58,7 @@ import {
   exportViewSvg,
 } from '@openarch/exporters';
 import { exportArchi, importArchi } from '@openarch/archi';
+import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
 import { exportWorkspaceMarkdown } from '@openarch/reporting';
 import { LanguageContext, type Language, useTranslation } from './i18n';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -589,6 +590,8 @@ export default function App() {
         if (result.warnings.length) {
           notify(`Imported with ${result.warnings.length} warning(s)`);
         }
+      } else if (file.name.toLowerCase().endsWith('.dsl') || file.name.toLowerCase().endsWith('.structurizr')) {
+        imported = c4ToModel(parseStructurizr(await file.text()));
       } else {
         const text = await file.text();
         imported = file.name.toLowerCase().endsWith('.json')
@@ -717,6 +720,16 @@ export default function App() {
       'application/zip',
     );
     notify('Exported .archimate');
+  };
+
+  const exportC4File = () => {
+    if (!model) return;
+    downloadFile(
+      `${slug(primaryText(model.name))}.dsl`,
+      modelToC4(model, currentView),
+      'text/plain',
+    );
+    notify('Exported C4/Structurizr DSL');
   };
 
   const exportReport = () => {
@@ -1276,6 +1289,7 @@ export default function App() {
           onExportCsv={exportCsv}
           onExportMermaid={exportMermaidFile}
           onExportArchi={exportArchiFile}
+          onExportC4={exportC4File}
           onExportReport={exportReport}
           onShare={share}
           onSave={() => void save()}

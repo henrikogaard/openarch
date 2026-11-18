@@ -9,8 +9,9 @@
     "preview": "vite preview --host"
   },
   "dependencies": {
-    "@openarch/core": "*",
     "@openarch/ai": "*",
+    "@openarch/c4": "*",
+    "@openarch/core": "*",
     "@openarch/exporters": "*",
     "@openarch/repository": "*",
     "@xyflow/react": "^12.3.0",

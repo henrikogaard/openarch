@@ -18,6 +18,7 @@ interface SidebarProps {
   onExportCsv: () => void;
   onExportMermaid: () => void;
   onExportArchi?: () => void;
+  onExportC4?: () => void;
   onExportReport?: () => void;
   onShare: () => void;
   onSave: () => void;
@@ -40,6 +41,7 @@ export default function Sidebar({
   onExportCsv,
   onExportMermaid,
   onExportArchi,
+  onExportC4,
   onExportReport,
   onShare,
   onSave,
@@ -77,7 +79,7 @@ export default function Sidebar({
         <input
           ref={fileInput}
           type="file"
-          accept=".xml,.json,.archimate,application/xml,application/json"
+          accept=".xml,.json,.archimate,.dsl,.structurizr,application/xml,application/json"
           hidden
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -89,6 +91,7 @@ export default function Sidebar({
         <button onClick={() => fileInput.current?.click()}>{t('import')}</button>
         <button onClick={onExportAoef}>{t('exportAoef')}</button>
         {onExportArchi && <button onClick={onExportArchi}>Export Archi (.archimate)</button>}
+        {onExportC4 && <button onClick={onExportC4}>Export C4 DSL (.dsl)</button>}
         <button onClick={onExportSvg}>{t('exportSvg')}</button>
         <button onClick={onExportPng}>{t('exportPng')}</button>
         <button onClick={onExportCsv}>{t('exportCsv')}</button>
