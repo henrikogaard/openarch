@@ -87,6 +87,8 @@ describe('analysis components render the model', () => {
         onDelete={() => {}}
         onImport={() => {}}
         onOpenPortfolio={() => {}}
+        onExportAll={() => {}}
+        onImportBackup={() => {}}
       />,
     );
     expect(screen.getAllByText('Workspaces').length).toBeGreaterThan(0);

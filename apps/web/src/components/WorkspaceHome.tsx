@@ -24,6 +24,8 @@ interface WorkspaceHomeProps {
   onDelete: (id: string) => void;
   onImport: (file: File) => void;
   onOpenPortfolio: () => void;
+  onExportAll: () => void;
+  onImportBackup: (file: File) => void;
 }
 
 const PURPOSE_LABEL: Record<ModelPurpose, string> = {
@@ -68,7 +70,10 @@ export default function WorkspaceHome({
   onDelete,
   onImport,
   onOpenPortfolio,
+  onExportAll,
+  onImportBackup,
 }: WorkspaceHomeProps) {
+  const backupInput = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | WorkspaceStatus>('all');
   const [purpose, setPurpose] = useState<'all' | ModelPurpose>('all');
@@ -191,6 +196,23 @@ export default function WorkspaceHome({
             <option value="recent">Recently updated</option>
             <option value="name">Name</option>
           </select>
+          <button className="small-button" onClick={onExportAll} title="Download every workspace as one JSON archive">
+            Export all
+          </button>
+          <button className="small-button" onClick={() => backupInput.current?.click()} title="Restore workspaces from an Export-all archive">
+            Import backup
+          </button>
+          <input
+            ref={backupInput}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onImportBackup(file);
+              event.target.value = '';
+            }}
+          />
         </div>
 
         {filtered.length === 0 ? (

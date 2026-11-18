@@ -43,6 +43,7 @@ import {
   createGitHubFileStore,
   GitRepository,
   LocalRepository,
+  NATIVE_SCHEMA_VERSION,
   parseNativeModel,
   readShareHash,
   serializeNativeModel,
@@ -449,6 +450,45 @@ export default function App() {
     const loaded = await Promise.all(list.map((workspace) => repository.getModel(workspace.id)));
     setPortfolioModels(loaded.filter((item): item is Model => Boolean(item)));
     setRoute('portfolio');
+  };
+
+  // Backup-all: every workspace as one JSON archive (and back).
+  const exportAll = async () => {
+    const list = await repository.listModels();
+    const models = (await Promise.all(list.map((workspace) => repository.getModel(workspace.id)))).filter(
+      (item): item is Model => Boolean(item),
+    );
+    downloadFile(
+      'openarch-backup.json',
+      JSON.stringify(
+        { kind: 'openarch-backup', schemaVersion: NATIVE_SCHEMA_VERSION, exportedAt: new Date().toISOString(), models },
+        null,
+        2,
+      ),
+      'application/json',
+    );
+    notify(`Exported ${models.length} workspace(s)`);
+  };
+
+  const importBackup = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text()) as { models?: unknown[] } | unknown[];
+      const models = Array.isArray(parsed) ? parsed : parsed?.models;
+      if (!Array.isArray(models) || models.length === 0) throw new Error('Not an OpenArch backup file');
+      const existing = new Set((await repository.listModels()).map((workspace) => workspace.id));
+      let count = 0;
+      for (const raw of models) {
+        // Round-trip through the native parser so migration + validation run.
+        const model = parseNativeModel(JSON.stringify(raw));
+        const toSave = existing.has(model.id) ? { ...model, id: `model-${crypto.randomUUID()}` } : model;
+        await repository.saveModel(toSave);
+        count += 1;
+      }
+      await refreshWorkspaces();
+      notify(`Imported ${count} workspace(s) from backup`);
+    } catch (error) {
+      notify(`Backup import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   const createWorkspace = async (input: CreateWorkspaceInput) => {
@@ -1165,6 +1205,8 @@ export default function App() {
           onDelete={deleteWorkspace}
           onImport={importFile}
           onOpenPortfolio={openPortfolio}
+          onExportAll={() => void exportAll()}
+          onImportBackup={(file) => void importBackup(file)}
         />
         <CommandPalette
           open={paletteOpen}

@@ -220,6 +220,8 @@ export interface Model {
   /** ISO timestamp of the last save; stamped by the repository. */
   updatedAt?: string;
   createdAt?: string;
+  /** Native JSON schema version, stamped on serialize. Not exported to AOEF. */
+  schemaVersion?: number;
   raw?: RawXml;
 }
 
