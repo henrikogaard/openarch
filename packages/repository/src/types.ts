@@ -29,6 +29,8 @@ export interface ModelRepository {
   listWaivers?(modelId: string): Promise<Waiver[]>;
   addWaiver?(modelId: string, waiver: { rule: string; entityId?: string; reason: string }): Promise<Waiver>;
   deleteWaiver?(modelId: string, waiverId: string): Promise<void>;
+  /** Multi-tenant: assign the workspace to an organisation (server mode). */
+  setOrg?(modelId: string, orgId: string | null): Promise<unknown>;
 }
 
 export function summarize(model: Model): ModelSummary {

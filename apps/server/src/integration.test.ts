@@ -361,3 +361,27 @@ describe('SCIM user provisioning', () => {
     expect(after.body.active).toBe(false);
   });
 });
+
+describe('multi-tenant org scoping', () => {
+  it('assigns an org and filters the model list by ?orgId=', async () => {
+    const set = await json<{ orgId: string | null }>('/api/models/sample-model/org', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ orgId: 'org-acme' }),
+    });
+    expect(set.status).toBe(200);
+    expect(set.body.orgId).toBe('org-acme');
+
+    const scoped = await json<Array<{ id: string }>>('/api/models?orgId=org-acme', { headers: admin });
+    expect(scoped.body.some((m) => m.id === 'sample-model')).toBe(true);
+    const other = await json<Array<{ id: string }>>('/api/models?orgId=org-other', { headers: admin });
+    expect(other.body.some((m) => m.id === 'sample-model')).toBe(false);
+
+    const cleared = await json<{ orgId: null }>('/api/models/sample-model/org', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ orgId: null }),
+    });
+    expect(cleared.body.orgId).toBeNull();
+  });
+});

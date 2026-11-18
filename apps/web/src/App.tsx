@@ -1651,6 +1651,15 @@ export default function App() {
                   model={model}
                   connectors={connectors}
                   onConnectorsChange={setConnectors}
+                  serverOrgId={null}
+                  onSetOrg={(orgId) => {
+                    if (repository.setOrg) {
+                      void repository.setOrg(model.id, orgId).then(
+                        () => notify(`Organisation set to ${orgId ?? '(none)'}`),
+                        (error) => notify(`Could not set organisation: ${error instanceof Error ? error.message : String(error)}`),
+                      );
+                    }
+                  }}
                   onUpdate={updateModelMeta}
                   onBack={goHome}
                   onDuplicate={() => duplicateWorkspace(model.id)}

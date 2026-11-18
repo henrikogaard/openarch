@@ -168,4 +168,12 @@ export class ServerRepository implements ModelRepository {
       method: 'DELETE',
     });
   }
+
+  setOrg(id: string, orgId: string | null): Promise<unknown> {
+    return this.request(`/models/${encodeURIComponent(id)}/org`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ orgId }),
+    });
+  }
 }

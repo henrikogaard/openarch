@@ -47,6 +47,8 @@ interface Snapshot {
 
 interface Workspace {
   model: Model;
+  /** Optional organisation/tenant id for multi-tenant deployments. */
+  orgId?: string;
   version: number;
   updatedAt: string;
   updatedBy: string;
@@ -328,13 +330,28 @@ app.delete('/scim/v2/Users/:id', async (request, reply) => {
 });
 
 
+app.post('/api/models/:id/org', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner']);
+  if (!actor) return;
+  const body = (request.body ?? {}) as { orgId?: string | null };
+  workspace.orgId = body.orgId || undefined;
+  audit(workspace, actor.subject, 'update', `Set organisation to ${workspace.orgId ?? '(none)'}`);
+  persistToDisk();
+  return { orgId: workspace.orgId ?? null };
+});
+
 app.get('/api/models', async (request, reply) => {
   const actor = requireActor(request, reply);
   if (!actor) return;
   // Only list workspaces the actor can actually read. In open mode every
-  // workspace is visible; with auth on, membership is required.
+  // workspace is visible; with auth on, membership is required. An optional
+  // ?orgId= scopes the list to one tenant (multi-tenant deployments).
+  const orgId = (request.query as { orgId?: string }).orgId;
   return [...workspaces.values()]
     .filter((workspace) => !authConfig.required || isMember(workspace.members, actor))
+    .filter((workspace) => !orgId || workspace.orgId === orgId)
     .map((workspace) => ({ ...workspace.model, updatedAt: workspace.updatedAt }));
 });
 

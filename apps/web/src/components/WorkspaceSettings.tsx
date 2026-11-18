@@ -17,6 +17,8 @@ interface WorkspaceSettingsProps {
   model: Model;
   connectors?: ConnectorConfig;
   onConnectorsChange?: (config: ConnectorConfig) => void;
+  serverOrgId?: string | null;
+  onSetOrg?: (orgId: string | null) => void;
   onUpdate: (patch: Partial<Model>) => void;
   onBack: () => void;
   onDuplicate: () => void;
@@ -34,6 +36,8 @@ export default function WorkspaceSettings({
   model,
   connectors = {},
   onConnectorsChange,
+  serverOrgId,
+  onSetOrg,
   onUpdate,
   onBack,
   onDuplicate,
@@ -236,6 +240,24 @@ export default function WorkspaceSettings({
             </label>
           )}
         </section>
+
+        {onSetOrg && (
+          <section className="panel-card wide">
+            <h3>Organisation (server mode)</h3>
+            <div className="field-row">
+              <label className="field">
+                Org / tenant id
+                <input
+                  className="form-input full"
+                  placeholder="org-acme"
+                  defaultValue={serverOrgId ?? ''}
+                  onBlur={(event) => onSetOrg(event.target.value.trim() || null)}
+                />
+              </label>
+            </div>
+            <p className="muted">Scopes the workspace list with ?orgId= on the server.</p>
+          </section>
+        )}
 
         <section className="panel-card wide">
           <h3>{t('connectors')}</h3>
