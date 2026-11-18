@@ -7,16 +7,7 @@ export default defineConfig({
   server: { port: 5173 },
   build: {
     chunkSizeWarningLimit: 750,
-    rollupOptions: {
-      output: {
-        // Split vendor code out; lazy tabs (AI, enrichment/IaC) become their
-        // own async chunks automatically via React.lazy.
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined;
-          if (/node_modules\/(react|react-dom|scheduler|@xyflow)\//.test(id)) return 'vendor-react';
-          return 'vendor';
-        },
-      },
-    },
+    // Lazy tabs (AI, enrichment/IaC) split into their own async chunks via
+    // React.lazy; everything else stays in the entry + vendor chunk.
   },
 });
