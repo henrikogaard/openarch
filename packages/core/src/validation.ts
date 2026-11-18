@@ -1,4 +1,4 @@
-import { getElementType, getRelationshipType, isAllowedRelationship } from './metamodel';
+import { getElementType, getRelationshipType, isAllowedRelationship, metamodelVersions } from './metamodel';
 import type { Model } from './types';
 import { primaryText } from './types';
 
@@ -22,6 +22,15 @@ export function validateModel(model: Model, options: ValidationOptions = {}): Va
 
   if (!primaryText(model.name)) {
     issues.push({ severity: 'warning', rule: 'model.name', message: 'Model has no name' });
+  }
+
+  if (model.metamodelVersion && !metamodelVersions().includes(model.metamodelVersion)) {
+    issues.push({
+      severity: 'warning',
+      rule: 'model.metamodel-version',
+      message: `Model targets metamodel version "${model.metamodelVersion}", which is not registered (available: ${metamodelVersions().join(', ')})`,
+      suggestion: 'Register the metamodel version or set the model back to 3.2.',
+    });
   }
 
   for (const element of model.elements) {

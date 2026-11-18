@@ -222,6 +222,8 @@ export interface Model {
   createdAt?: string;
   /** Native JSON schema version, stamped on serialize. Not exported to AOEF. */
   schemaVersion?: number;
+  /** ArchiMate metamodel version this model targets (default 3.2). */
+  metamodelVersion?: string;
   raw?: RawXml;
 }
 

@@ -14,6 +14,34 @@ import type {
  */
 export const METAMODEL_VERSION = '3.2';
 
+/** A versioned metamodel: element and relationship type tables for one ArchiMate version. */
+export interface MetamodelRegistry {
+  version: string;
+  elementTypes: ElementTypeDefinition[];
+  relationshipTypes: RelationshipTypeDefinition[];
+}
+
+const metamodelRegistries = new Map<string, MetamodelRegistry>();
+
+/** Register a metamodel version (e.g. a future 4.0) alongside 3.2. Idempotent per version. */
+export function registerMetamodelVersion(
+  version: string,
+  registry: Omit<MetamodelRegistry, 'version'>,
+): void {
+  if (!metamodelRegistries.has(version)) {
+    metamodelRegistries.set(version, { version, ...registry });
+  }
+}
+
+/** The registry for a version, falling back to the default (3.2). */
+export function getMetamodel(version: string = METAMODEL_VERSION): MetamodelRegistry {
+  return metamodelRegistries.get(version) ?? metamodelRegistries.get(METAMODEL_VERSION)!;
+}
+
+export function metamodelVersions(): string[] {
+  return [...metamodelRegistries.keys()];
+}
+
 export const LAYER_COLORS: Record<Layer, string> = {
   business: '#f7dc6f',
   application: '#8ec3e8',
@@ -304,6 +332,12 @@ export const RELATIONSHIP_TYPES: RelationshipTypeDefinition[] = [
 
 const elementTypeIndex = new Map(ELEMENT_TYPES.map((type) => [type.id, type]));
 const relationshipTypeIndex = new Map(RELATIONSHIP_TYPES.map((type) => [type.id, type]));
+
+// The default registry is 3.2; other versions register themselves here.
+registerMetamodelVersion(METAMODEL_VERSION, {
+  elementTypes: ELEMENT_TYPES,
+  relationshipTypes: RELATIONSHIP_TYPES,
+});
 
 export function getElementType(id: string): ElementTypeDefinition | undefined {
   return elementTypeIndex.get(id);

@@ -7,10 +7,13 @@ import {
   diffModels,
   ELEMENT_TYPES,
   filterModelByViewpoint,
+  getMetamodel,
   impactAnalysis,
   isAllowedRelationship,
   MATRIX_PRESETS,
+  metamodelVersions,
   primaryText,
+  registerMetamodelVersion,
   registerPlugin,
   RELATIONSHIP_TYPES,
   searchModel,
@@ -130,6 +133,21 @@ describe('analysis', () => {
 
   it('searches elements', () => {
     expect(searchModel(model, 'claim').length).toBeGreaterThan(0);
+  });
+
+  it('has a versioned metamodel registry with 3.2 registered and warns on unknown versions', () => {
+    expect(metamodelVersions()).toContain('3.2');
+    expect(getMetamodel('3.2').elementTypes.length).toBe(ELEMENT_TYPES.length);
+    expect(getMetamodel('9.9').elementTypes.length).toBe(ELEMENT_TYPES.length); // falls back to 3.2
+
+    registerMetamodelVersion('4.0', { elementTypes: ELEMENT_TYPES, relationshipTypes: RELATIONSHIP_TYPES });
+    expect(metamodelVersions()).toContain('4.0');
+
+    const model = createSampleModel();
+    model.metamodelVersion = '9.9';
+    expect(validateModel(model).some((issue) => issue.rule === 'model.metamodel-version')).toBe(true);
+    model.metamodelVersion = '3.2';
+    expect(validateModel(model).some((issue) => issue.rule === 'model.metamodel-version')).toBe(false);
   });
 
   it('derives value streams with ordered stages and supporting capabilities', () => {
