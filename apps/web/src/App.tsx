@@ -1,4 +1,5 @@
 import {
+  alignNodes,
   allowedRelationships,
   assignElements,
   buildConfiguredView,
@@ -6,6 +7,7 @@ import {
   createModel,
   createSampleModel,
   diffModels,
+  distributeNodes,
   duplicateElements,
   elementRefsForNodes,
   filterModelByDomain,
@@ -25,6 +27,7 @@ import {
   type Model,
   type ModelDiff,
   type ModelSummary,
+  type NodeAlignment,
   type RelationshipTypeDefinition,
   type View,
 } from '@openarch/core';
@@ -145,6 +148,7 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [snapToGrid, setSnapToGrid] = useState(true);
   const modelRef = useRef<Model | null>(null);
   const clipboardRef = useRef<string[]>([]);
   const pasteCountRef = useRef(0);
@@ -712,6 +716,22 @@ export default function App() {
     notify(`Updated ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
   };
 
+  const alignSelection = (alignment: NodeAlignment) => {
+    const current = modelRef.current;
+    if (!current || selectedNodeIds.length < 2) return;
+    const view = current.views[activeViewIndex];
+    if (!view) return;
+    commit((model) => alignNodes(model, view.id, selectedNodeIds, alignment));
+  };
+
+  const distributeSelection = (axis: 'x' | 'y') => {
+    const current = modelRef.current;
+    if (!current || selectedNodeIds.length < 3) return;
+    const view = current.views[activeViewIndex];
+    if (!view) return;
+    commit((model) => distributeNodes(model, view.id, selectedNodeIds, axis));
+  };
+
   const updateModelMeta = (patch: Partial<Model>) => {
     commit((current) => ({ ...current, ...patch }));
   };
@@ -944,6 +964,14 @@ export default function App() {
                         <option value="staging">staging</option>
                         <option value="prod">prod</option>
                       </select>
+                      <label title="Snap nodes to the 20 px grid while dragging">
+                        <input
+                          type="checkbox"
+                          checked={snapToGrid}
+                          onChange={(event) => setSnapToGrid(event.target.checked)}
+                        />
+                        Snap
+                      </label>
                       {LAYER_ORDER.filter((layer) => model.elements.some((element) => getElementType(element.type)?.layer === layer)).map((layer) => (
                         <label key={layer}>
                           <input
@@ -978,6 +1006,9 @@ export default function App() {
                       onNodesDelete={deleteNodes}
                       onEdgesDelete={deleteEdges}
                       onBulkAssign={bulkAssign}
+                      onAlign={alignSelection}
+                      onDistribute={distributeSelection}
+                      snapToGrid={snapToGrid}
                       onSelectionChange={handleCanvasSelection}
                     />
                   </div>

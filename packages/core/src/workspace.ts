@@ -3,10 +3,12 @@ import type {
   ArchiElement,
   Artefact,
   ArtefactKind,
+  Bounds,
   Domain,
   Model,
   ModelSummary,
   Point,
+  ViewNode,
   WorkspaceStatus,
 } from './types';
 import { primaryText } from './types';
@@ -246,6 +248,83 @@ export function duplicateElements(
     relationships: [...model.relationships, ...newRelationships],
     views,
   };
+}
+
+export type NodeAlignment = 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom';
+
+/**
+ * Align the given nodes of one view to a common edge or center line.
+ * No-op (same reference) when fewer than two nodes are selected.
+ */
+export function alignNodes(model: Model, viewId: string, nodeIds: string[], alignment: NodeAlignment): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view) return model;
+  const targets = view.nodes.filter((node) => ids.has(node.id));
+  if (targets.length < 2) return model;
+
+  const aligned = new Set(targets.map((node) => node.id));
+  const nodes = view.nodes.map((node) => {
+    if (!aligned.has(node.id)) return node;
+    const { bounds } = node;
+    let next: Bounds;
+    switch (alignment) {
+      case 'left':
+        next = { ...bounds, x: Math.min(...targets.map((n) => n.bounds.x)) };
+        break;
+      case 'right':
+        next = { ...bounds, x: Math.max(...targets.map((n) => n.bounds.x + n.bounds.w)) - bounds.w };
+        break;
+      case 'center-x': {
+        const center =
+          targets.reduce((sum, n) => sum + n.bounds.x + n.bounds.w / 2, 0) / targets.length;
+        next = { ...bounds, x: Math.round(center - bounds.w / 2) };
+        break;
+      }
+      case 'top':
+        next = { ...bounds, y: Math.min(...targets.map((n) => n.bounds.y)) };
+        break;
+      case 'bottom':
+        next = { ...bounds, y: Math.max(...targets.map((n) => n.bounds.y + n.bounds.h)) - bounds.h };
+        break;
+      case 'center-y': {
+        const middle =
+          targets.reduce((sum, n) => sum + n.bounds.y + n.bounds.h / 2, 0) / targets.length;
+        next = { ...bounds, y: Math.round(middle - bounds.h / 2) };
+        break;
+      }
+    }
+    return { ...node, bounds: next };
+  });
+  return { ...model, views: model.views.map((v) => (v.id === viewId ? { ...v, nodes } : v)) };
+}
+
+/**
+ * Distribute the given nodes of one view evenly along an axis, keeping the two
+ * extremes fixed. No-op (same reference) with fewer than three nodes.
+ */
+export function distributeNodes(model: Model, viewId: string, nodeIds: string[], axis: 'x' | 'y'): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view) return model;
+  const sorted = view.nodes
+    .filter((node) => ids.has(node.id))
+    .sort((a, b) => (axis === 'x' ? a.bounds.x - b.bounds.x : a.bounds.y - b.bounds.y));
+  if (sorted.length < 3) return model;
+
+  const position = (node: ViewNode) => (axis === 'x' ? node.bounds.x : node.bounds.y);
+  const min = position(sorted[0]);
+  const max = position(sorted[sorted.length - 1]);
+  const aligned = new Map<string, number>();
+  sorted.forEach((node, index) => {
+    aligned.set(node.id, Math.round(min + ((max - min) * index) / (sorted.length - 1)));
+  });
+  const nodes = view.nodes.map((node) => {
+    if (!aligned.has(node.id)) return node;
+    const value = aligned.get(node.id)!;
+    return { ...node, bounds: { ...node.bounds, ...(axis === 'x' ? { x: value } : { y: value }) } };
+  });
+  return { ...model, views: model.views.map((v) => (v.id === viewId ? { ...v, nodes } : v)) };
 }
 
 export interface DomainStat {

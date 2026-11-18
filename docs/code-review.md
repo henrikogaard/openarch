@@ -182,6 +182,17 @@ interrupted an in-progress handle drag, so the magic connector never opened.
 **Guard:** `e2e/smoke.spec.ts` and `e2e/duplicate.spec.ts` both drive a real handle-to-handle
 connection.
 
+### 7. Initial fitView ran before layout settled, leaving nodes under the inspector
+
+React Flow only auto-fits on mount; when the workspace route mounts, the pane can still measure
+0×0, so `fitView` fell back to max zoom and nodes rendered beyond the pane edge (under the
+inspector), unclickable.
+
+**Fix:** `FitViewOnChange` re-fits shortly after the active view id changes, once layout has
+settled; model commits now also preserve React Flow's selection flags instead of resetting them.
+
+**Guard:** `e2e/align.spec.ts` drags and aligns three nodes at real coordinates.
+
 ---
 
 *ArchiMate® is a registered trademark of The Open Group. OpenArch is not affiliated with,

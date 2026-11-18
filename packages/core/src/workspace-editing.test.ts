@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createSampleModel, validateModel } from './validation';
 import {
+  alignNodes,
   assignElements,
+  distributeNodes,
   duplicateElements,
   elementRefsForNodes,
   relationshipRefsForEdges,
@@ -105,5 +107,46 @@ describe('canvas editing helpers', () => {
     expect(validateModel(next).some((issue) => issue.rule === 'relationship.dangling')).toBe(false);
     expect(model.elements.length).toBe(next.elements.length - 2);
     expect(duplicateElements(model, ['nope'], 'view-overview')).toBe(model);
+  });
+
+  it('alignNodes aligns selected view nodes to a common edge or center', () => {
+    const model = createSampleModel();
+    // n1 (40,80), n2 (260,80), n4 (260,260) in view-overview.
+    const left = alignNodes(model, 'view-overview', ['n1', 'n2', 'n4'], 'left');
+    const xs = left.views[0].nodes.filter((n) => ['n1', 'n2', 'n4'].includes(n.id)).map((n) => n.bounds.x);
+    expect(new Set(xs).size).toBe(1);
+    expect(xs[0]).toBe(40);
+
+    const bottom = alignNodes(model, 'view-overview', ['n1', 'n2', 'n4'], 'bottom');
+    const bottoms = bottom.views[0].nodes
+      .filter((n) => ['n1', 'n2', 'n4'].includes(n.id))
+      .map((n) => n.bounds.y + n.bounds.h);
+    expect(new Set(bottoms).size).toBe(1);
+    expect(bottoms[0]).toBe(260 + 64);
+
+    // Unselected nodes are untouched; no-ops return the same reference.
+    expect(left.views[0].nodes.find((n) => n.id === 'n3')!.bounds.x).toBe(480);
+    expect(alignNodes(model, 'view-overview', ['n1'], 'left')).toBe(model);
+    expect(alignNodes(model, 'no-such-view', ['n1', 'n2'], 'left')).toBe(model);
+  });
+
+  it('distributeNodes spreads nodes evenly along an axis, extremes fixed', () => {
+    const model = createSampleModel();
+    // n1 x=40, n2 x=260, n6 x=700.
+    const next = distributeNodes(model, 'view-overview', ['n1', 'n2', 'n6'], 'x');
+    const sorted = next.views[0].nodes
+      .filter((n) => ['n1', 'n2', 'n6'].includes(n.id))
+      .sort((a, b) => a.bounds.x - b.bounds.x);
+    expect(sorted.map((n) => n.bounds.x)).toEqual([40, 370, 700]);
+
+    // n1 y=80, n4 y=260, n7 y=440 — already even.
+    const vertical = distributeNodes(model, 'view-overview', ['n1', 'n4', 'n7'], 'y');
+    const ys = vertical.views[0].nodes
+      .filter((n) => ['n1', 'n4', 'n7'].includes(n.id))
+      .sort((a, b) => a.bounds.y - b.bounds.y)
+      .map((n) => n.bounds.y);
+    expect(ys).toEqual([80, 260, 440]);
+
+    expect(distributeNodes(model, 'view-overview', ['n1', 'n2'], 'x')).toBe(model);
   });
 });

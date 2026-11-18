@@ -280,7 +280,7 @@ matter more than another connector.
 | **5. Scale & ecosystem** | 🟡 Partial | Cross-workspace portfolio, templates gallery | Marketplace, SCIM, multi-tenant hierarchy |
 | **6. Trust & daily use** | 🟡 In progress | Debounced autosave + saved/unsaved badge, per-tab error boundary | Version history, conflict UI, E2E, i18n, accessibility, performance |
 | **7. Workflow stickiness** | ⏳ Planned | — | IaC drift, Git-native workspaces, command palette, search, bulk edit, onboarding |
-| **7A. Drawing depth** | 🟡 In progress | Canvas delete synced to the model (`onNodesDelete`/`onEdgesDelete` → `removeElements`/`removeRelationships`), multi-select + bulk domain/environment assignment, copy/paste/duplicate (⌘/Ctrl+C/V/D) | Align/distribute, snap-to-grid, bendpoints, on-canvas labels, containers, z-order, context menu, palette drag-and-drop, presentation mode |
+| **7A. Drawing depth** | 🟡 In progress | Canvas delete synced to the model (`onNodesDelete`/`onEdgesDelete` → `removeElements`/`removeRelationships`), multi-select + bulk domain/environment assignment, copy/paste/duplicate (⌘/Ctrl+C/V/D), align/distribute + 20 px snap-to-grid | Edge bendpoints/reconnect, on-canvas labels, containers, z-order, context menu, palette drag-and-drop, presentation mode |
 | **8. Enterprise & ecosystem** | ⏳ Planned | — | OIDC end-to-end, governance UI, reporting, connectors, SCIM, value streams, C4, ArchiMate 4.0 |
 
 The remaining items in Phases 2–5 are integration-heavy (external systems) or require a larger
@@ -394,8 +394,10 @@ Remaining, in order:
 
 5. ~~Copy/paste/duplicate (clipboard of element subgraphs, including internal relationships).~~
    ✅ `duplicateElements` (core) + ⌘/Ctrl+C/V/D in the editor; `e2e/duplicate.spec.ts`.
-6. Align/distribute (left/center/right/top/middle/bottom, horizontal/vertical distribute).
-7. Snap-to-grid + alignment guides while dragging.
+6. ~~Align/distribute (left/center/right/top/middle/bottom, horizontal/vertical distribute).~~
+   ✅ `alignNodes`/`distributeNodes` (core) + Align/Distribute menus in the selection bar.
+7. ~~Snap-to-grid~~ ✅ 20 px snap with a Snap toggle in the view bar (plus an initial-fit fix,
+   code-review finding #7).
 8. Edge bendpoints and reconnection (drag edge ends to another node).
 9. On-canvas label editing (double-click to rename).
 10. Containers/nested nodes, z-order controls (bring forward/send backward).
@@ -469,7 +471,7 @@ proving it, and the diagram survives a round-trip looking the way the user left 
 | 11 | Canvas delete synced to model + multi-select bulk assign | 7A | ✅ `feat/drawing-depth-trust` |
 | 12 | Autosave + saved/unsaved badge + per-tab error boundary | 6 | ✅ `feat/drawing-depth-trust` |
 | 13 | Playwright E2E: create → add → connect → bulk-assign → delete → reload → export AOEF | 6/7A | ✅ `e2e/smoke.spec.ts`, runs in CI |
-| 14 | Drawing polish: align/distribute, snap, bendpoints, on-canvas labels (copy/paste ✅) | 7A | Next |
+| 14 | Drawing polish: bendpoints/reconnect, on-canvas labels, containers, z-order (copy/paste, align/distribute, snap ✅) | 7A | Next |
 | 15 | Containers, z-order, context menu, palette drag-and-drop, presentation mode | 7A | Later |
 | 16 | C4 / Structurizr bridge | 2 | Next |
 | 17 | ArchiMate 4.0 registry | 3 | Next |

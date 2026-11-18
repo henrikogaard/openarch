@@ -7,8 +7,10 @@ import {
   Panel,
   Position,
   ReactFlow,
+  ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type Node,
@@ -22,6 +24,7 @@ import {
   getRelationshipType,
   LAYER_LABELS,
   primaryText,
+  type NodeAlignment,
   type ArchiElement,
   type Bounds,
   type Domain,
@@ -80,6 +83,21 @@ function LabelShape({ data }: NodeProps) {
 }
 
 const nodeTypes = { archi: ArchiShape, label: LabelShape };
+
+/**
+ * React Flow only auto-fits on mount, when the pane can still measure 0×0
+ * (the workspace route is just mounting), which leaves the initial view at
+ * max zoom with nodes under the inspector. Re-fit shortly after the view id
+ * changes, once layout has settled.
+ */
+function FitViewOnChange({ viewId }: { viewId: string }) {
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    const timer = window.setTimeout(() => fitView({ padding: 0.2, maxZoom: 1 }), 60);
+    return () => window.clearTimeout(timer);
+  }, [viewId, fitView]);
+  return null;
+}
 
 function toFlowNodes(
   view: View,
@@ -173,6 +191,9 @@ interface CanvasProps {
   onNodesDelete: (nodeIds: string[]) => void;
   onEdgesDelete: (edgeIds: string[]) => void;
   onBulkAssign: (elementIds: string[], patch: { domain?: string; environment?: string }) => void;
+  onAlign: (alignment: NodeAlignment) => void;
+  onDistribute: (axis: 'x' | 'y') => void;
+  snapToGrid: boolean;
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void;
 }
 
@@ -190,6 +211,9 @@ export default function Canvas({
   onNodesDelete,
   onEdgesDelete,
   onBulkAssign,
+  onAlign,
+  onDistribute,
+  snapToGrid,
   onSelectionChange,
 }: CanvasProps) {
   const t = useTranslation();
@@ -205,7 +229,16 @@ export default function Canvas({
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
 
-  useEffect(() => setNodes(initialNodes), [initialNodes, setNodes]);
+  // Sync from the model, but keep React Flow's own selection flags so that
+  // model commits (align, bulk-assign, …) do not clear the user's selection.
+  useEffect(() => {
+    setNodes((current) =>
+      initialNodes.map((node) => {
+        const existing = current.find((candidate) => candidate.id === node.id);
+        return existing ? { ...node, selected: existing.selected } : node;
+      }),
+    );
+  }, [initialNodes, setNodes]);
   useEffect(() => setEdges(initialEdges), [initialEdges, setEdges]);
 
   const matches = ELEMENT_TYPES.filter((type) =>
@@ -229,6 +262,7 @@ export default function Canvas({
 
   return (
     <div className="canvas-wrap">
+      <ReactFlowProvider>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -237,6 +271,8 @@ export default function Canvas({
         onEdgesChange={onEdgesChange}
         deleteKeyCode={['Backspace', 'Delete']}
         multiSelectionKeyCode="Shift"
+        snapToGrid={snapToGrid}
+        snapGrid={[20, 20]}
         onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) => {
           // Reference-stable updates: React Flow re-emits selection on store
           // changes, and a fresh array every time would loop renders.
@@ -328,6 +364,36 @@ export default function Canvas({
               {selectionCount} {t('selected')}
             </strong>
             <button onClick={deleteSelection}>{t('delete')}</button>
+            {selectedNodeIds.length >= 2 && (
+              <>
+                <select
+                  value=""
+                  aria-label="Align selection"
+                  onChange={(event) => {
+                    if (event.target.value) onAlign(event.target.value as NodeAlignment);
+                  }}
+                >
+                  <option value="">Align…</option>
+                  <option value="left">Left</option>
+                  <option value="center-x">Center</option>
+                  <option value="right">Right</option>
+                  <option value="top">Top</option>
+                  <option value="center-y">Middle</option>
+                  <option value="bottom">Bottom</option>
+                </select>
+                <select
+                  value=""
+                  aria-label="Distribute selection"
+                  onChange={(event) => {
+                    if (event.target.value) onDistribute(event.target.value as 'x' | 'y');
+                  }}
+                >
+                  <option value="">Distribute…</option>
+                  <option value="x">Horizontally</option>
+                  <option value="y">Vertically</option>
+                </select>
+              </>
+            )}
             {selectedElementIds.length > 0 && (
               <>
                 <label>
@@ -368,7 +434,9 @@ export default function Canvas({
             )}
           </Panel>
         )}
+        <FitViewOnChange viewId={view.id} />
       </ReactFlow>
+      </ReactFlowProvider>
     </div>
   );
 }
