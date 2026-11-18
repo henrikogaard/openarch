@@ -11,6 +11,7 @@
   "dependencies": {
     "@openarch/ai": "*",
     "@openarch/c4": "*",
+    "@openarch/connectors": "*",
     "@openarch/core": "*",
     "@openarch/exporters": "*",
     "@openarch/repository": "*",

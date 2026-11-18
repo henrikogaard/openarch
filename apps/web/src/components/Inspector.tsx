@@ -9,12 +9,22 @@ import {
 } from '@openarch/core';
 import { useEffect, useState } from 'react';
 import { useTranslation } from '../i18n';
+import {
+  confluencePageUrl,
+  jiraIssueUrl,
+  linksOfElement,
+  linkPropertyKey,
+  type ConnectorConfig,
+} from '@openarch/connectors';
+
+type LinkSystem = 'jira' | 'confluence' | 'servicenow';
 
 interface InspectorProps {
   element?: ArchiElement;
   elements: ArchiElement[];
   relationships: Relationship[];
   domains?: Domain[];
+  connectors?: ConnectorConfig;
   onSelect: (id: string) => void;
   onUpdate: (id: string, patch: Partial<ArchiElement>) => void;
 }
@@ -24,12 +34,15 @@ export default function Inspector({
   elements,
   relationships,
   domains = [],
+  connectors,
   onSelect,
   onUpdate,
 }: InspectorProps) {
   const t = useTranslation();
   const [name, setName] = useState('');
   const [documentation, setDocumentation] = useState('');
+  const [linkSystem, setLinkSystem] = useState<LinkSystem>('jira');
+  const [linkValue, setLinkValue] = useState('');
 
   useEffect(() => {
     setName(primaryText(element?.name ?? []));
@@ -74,6 +87,73 @@ export default function Inspector({
             }
           }}
         />
+      </section>
+
+      <section>
+        <h4>External links</h4>
+        <ul className="relation-list">
+          {linksOfElement(element).map((link) => {
+            const url =
+              link.system === 'jira'
+                ? jiraIssueUrl(connectors ?? {}, link.value)
+                : link.system === 'confluence'
+                  ? confluencePageUrl(connectors ?? {}, link.value)
+                  : undefined;
+            return (
+              <li key={link.system + link.value}>
+                <span className="chip">{link.system}</span>
+                {url ? (
+                  <a href={url} target="_blank" rel="noreferrer">{link.value}</a>
+                ) : (
+                  <span className="mono">{link.value}</span>
+                )}
+                <button
+                  className="small-button"
+                  onClick={() =>
+                    onUpdate(element.id, {
+                      properties: element.properties.filter(
+                        (property) => property.key !== linkPropertyKey(link.system as LinkSystem),
+                      ),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </li>
+            );
+          })}
+          {linksOfElement(element).length === 0 && (
+            <li className="empty">No links yet.</li>
+          )}
+        </ul>
+        <div className="field-row">
+          <select value={linkSystem} onChange={(event) => setLinkSystem(event.target.value as LinkSystem)}>
+            <option value="jira">Jira issue</option>
+            <option value="confluence">Confluence page</option>
+            <option value="servicenow">ServiceNow CI</option>
+          </select>
+          <input
+            className="form-input"
+            placeholder={linkSystem === 'jira' ? 'PROJ-123' : linkSystem === 'confluence' ? 'page id' : 'CI name'}
+            value={linkValue}
+            onChange={(event) => setLinkValue(event.target.value)}
+          />
+          <button
+            className="small-button"
+            disabled={!linkValue.trim()}
+            onClick={() => {
+              onUpdate(element.id, {
+                properties: [
+                  ...element.properties.filter((property) => property.key !== linkPropertyKey(linkSystem)),
+                  { key: linkPropertyKey(linkSystem), value: linkValue.trim() },
+                ],
+              });
+              setLinkValue('');
+            }}
+          >
+            Link
+          </button>
+        </div>
       </section>
 
       <section>

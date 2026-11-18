@@ -22,6 +22,7 @@ interface SidebarProps {
   onExportDocx?: () => void;
   onExportPptx?: () => void;
   onExportReport?: () => void;
+  onPublishConfluence?: () => void;
   onShare: () => void;
   onSave: () => void;
 }
@@ -47,6 +48,7 @@ export default function Sidebar({
   onExportDocx,
   onExportPptx,
   onExportReport,
+  onPublishConfluence,
   onShare,
   onSave,
 }: SidebarProps) {
@@ -103,6 +105,11 @@ export default function Sidebar({
         {onExportReport && <button onClick={onExportReport}>Export report (.md)</button>}
         {onExportDocx && <button onClick={onExportDocx}>Export DOCX report</button>}
         {onExportPptx && <button onClick={onExportPptx}>Export PPTX deck</button>}
+        {onPublishConfluence && (
+          <button onClick={onPublishConfluence} title="Publish the workspace as a Confluence page (set URL+token in Settings)">
+            Publish to Confluence
+          </button>
+        )}
         <button onClick={onShare}>{t('share')}</button>
         <button onClick={onExportJson}>{t('exportJson')}</button>
       </div>

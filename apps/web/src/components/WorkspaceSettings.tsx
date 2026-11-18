@@ -10,9 +10,12 @@ import {
   type WorkspaceStatus,
 } from '@openarch/core';
 import { useState } from 'react';
+import type { ConnectorConfig } from '@openarch/connectors';
 
 interface WorkspaceSettingsProps {
   model: Model;
+  connectors?: ConnectorConfig;
+  onConnectorsChange?: (config: ConnectorConfig) => void;
   onUpdate: (patch: Partial<Model>) => void;
   onBack: () => void;
   onDuplicate: () => void;
@@ -28,6 +31,8 @@ const PURPOSE_LABEL: Record<ModelPurpose, string> = {
 
 export default function WorkspaceSettings({
   model,
+  connectors = {},
+  onConnectorsChange,
   onUpdate,
   onBack,
   onDuplicate,
@@ -228,6 +233,55 @@ export default function WorkspaceSettings({
               </select>
             </label>
           )}
+        </section>
+
+        <section className="panel-card wide">
+          <h3>Connectors</h3>
+          <p className="muted">
+            Link elements to Jira issues, Confluence pages, and ServiceNow CIs; publish views to
+            Confluence. The token is kept in this browser session only.
+          </p>
+          <div className="field-row">
+            <label className="field">
+              Jira base URL
+              <input
+                className="form-input full"
+                placeholder="https://company.atlassian.net"
+                value={connectors.jiraBaseUrl ?? ''}
+                onChange={(event) => onConnectorsChange?.({ ...connectors, jiraBaseUrl: event.target.value || undefined })}
+              />
+            </label>
+            <label className="field">
+              Confluence base URL
+              <input
+                className="form-input full"
+                placeholder="https://company.atlassian.net/wiki"
+                value={connectors.confluenceBaseUrl ?? ''}
+                onChange={(event) => onConnectorsChange?.({ ...connectors, confluenceBaseUrl: event.target.value || undefined })}
+              />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              ServiceNow instance URL
+              <input
+                className="form-input full"
+                placeholder="https://company.service-now.com"
+                value={connectors.serviceNowUrl ?? ''}
+                onChange={(event) => onConnectorsChange?.({ ...connectors, serviceNowUrl: event.target.value || undefined })}
+              />
+            </label>
+            <label className="field">
+              API token (session only)
+              <input
+                className="form-input full"
+                type="password"
+                autoComplete="off"
+                value={connectors.token ?? ''}
+                onChange={(event) => onConnectorsChange?.({ ...connectors, token: event.target.value || undefined })}
+              />
+            </label>
+          </div>
         </section>
 
         <section className="panel-card wide">

@@ -61,6 +61,7 @@ import {
 } from '@openarch/exporters';
 import { exportArchi, importArchi } from '@openarch/archi';
 import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
+import { publishToConfluence, type ConnectorConfig } from '@openarch/connectors';
 import { exportViewsPptx, exportWorkspaceDocx, exportWorkspaceMarkdown } from '@openarch/reporting';
 import { LanguageContext, type Language, useTranslation } from './i18n';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -178,6 +179,38 @@ export default function App() {
   const [createSignal, setCreateSignal] = useState(0);
   const [importSignal, setImportSignal] = useState(0);
   const [allModels, setAllModels] = useState<Model[] | null>(null);
+  const [connectors, setConnectors] = useState<ConnectorConfig>(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('openarch-connectors') ?? '{}') as ConnectorConfig;
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem('openarch-connectors', JSON.stringify(connectors));
+  }, [connectors]);
+
+  const publishViewToConfluence = async () => {
+    if (!model || !currentView) return;
+    if (!connectors.confluenceBaseUrl || !connectors.token) {
+      notify('Set Confluence URL + token in Settings → Connectors first');
+      setTab('settings');
+      return;
+    }
+    try {
+      const { exportWorkspaceHtml } = await import('@openarch/reporting');
+      const pageId = await publishToConfluence(
+        connectors,
+        `${primaryText(model.name)} — ${primaryText(currentView.name)}`,
+        exportWorkspaceHtml(model),
+        'ARCH',
+      );
+      notify(`Published to Confluence (page ${pageId})`);
+    } catch (error) {
+      notify(`Confluence publish failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     localStorage.getItem('openarch-theme') === 'dark' ? 'dark' : 'light',
   );
@@ -1370,6 +1403,7 @@ export default function App() {
           onExportDocx={() => void exportDocx()}
           onExportPptx={() => void exportPptx()}
           onExportReport={exportReport}
+          onPublishConfluence={() => void publishViewToConfluence()}
           onShare={share}
           onSave={() => void save()}
         />
@@ -1615,6 +1649,8 @@ export default function App() {
               ) : tab === 'settings' ? (
                 <WorkspaceSettings
                   model={model}
+                  connectors={connectors}
+                  onConnectorsChange={setConnectors}
                   onUpdate={updateModelMeta}
                   onBack={goHome}
                   onDuplicate={() => duplicateWorkspace(model.id)}
@@ -1643,6 +1679,7 @@ export default function App() {
                 elements={model.elements}
                 relationships={model.relationships}
                 domains={model.domains ?? []}
+                connectors={connectors}
                 onSelect={setSelectedElementId}
                 onUpdate={updateElement}
               />
