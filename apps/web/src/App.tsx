@@ -1199,9 +1199,9 @@ export default function App() {
               ))}
             </nav>
             <div className="topbar-right">
-              <button onClick={() => setPaletteOpen(true)} title="Command palette (⌘K)">⌘K</button>
-              <button onClick={() => setShowSavedViews(true)} title="Saved views">☆ Views</button>
-              {tab === 'editor' && <button onClick={() => setPresenting(true)} title="Presentation mode">▶ Present</button>}
+              <button onClick={() => setPaletteOpen(true)} title={t('paletteButton')}>⌘K</button>
+              <button onClick={() => setShowSavedViews(true)} title={t('viewsButton')}>☆ Views</button>
+              {tab === 'editor' && <button onClick={() => setPresenting(true)} title={t('presentButton')}>▶ {t('present')}</button>}
               <button onClick={undo} disabled={past.length === 0} title={t('undo')}>↶</button>
               <button onClick={redo} disabled={future.length === 0} title={t('redo')}>↷</button>
               <span className="model-title">{model ? primaryText(model.name) : 'No workspace'}</span>
@@ -1210,13 +1210,13 @@ export default function App() {
               {!readOnly && model && (
                 <span className={`save-badge ${dirty ? 'dirty' : ''}`} title={lastSavedAt ?? undefined}>
                   {dirty
-                    ? '● Unsaved changes'
+                    ? t('unsavedChanges')
                     : lastSavedAt
-                      ? `✓ Saved ${new Date(lastSavedAt).toLocaleTimeString()}`
-                      : '✓ Saved'}
+                      ? `${t('saved')} ${new Date(lastSavedAt).toLocaleTimeString()}`
+                      : t('saved')}
                 </span>
               )}
-              <span className="status" title={status}>{status}</span>
+              <span className="status" title={status} aria-live="polite">{status}</span>
             </div>
           </header>
 
@@ -1225,8 +1225,8 @@ export default function App() {
               <ErrorBoundary key={tab} name={tab}>
               {!model ? (
                 <div className="placeholder">
-                  <h2>No workspace open</h2>
-                  <p>Return to the workspace list to open or create one.</p>
+                  <h2>{t('noWorkspace')}</h2>
+                  <p>{t('noWorkspaceHint')}</p>
                 </div>
               ) : tab === 'editor' && scopedView ? (
                 <>
@@ -1234,8 +1234,8 @@ export default function App() {
                     {model.views.map((view, index) => (
                       <span key={view.id} className={`view-tab ${index === activeViewIndex ? 'active' : ''}`}>
                         <button onClick={() => setActiveViewIndex(index)}>{primaryText(view.name) || view.id}</button>
-                        <button className="view-tab-action" onClick={() => renameView(index)} title="Rename view">✎</button>
-                        <button className="view-tab-action" onClick={() => deleteView(index)} title="Delete view">×</button>
+                        <button className="view-tab-action" onClick={() => renameView(index)} title={t('renameView')} aria-label={t('renameView')}>✎</button>
+                        <button className="view-tab-action" onClick={() => deleteView(index)} title={t('deleteView')} aria-label={t('deleteView')}>×</button>
                       </span>
                     ))}
                     <button className="small-button" onClick={addView}>+ View</button>
@@ -1260,13 +1260,13 @@ export default function App() {
                         <option value="staging">staging</option>
                         <option value="prod">prod</option>
                       </select>
-                      <label title="Snap nodes to the 20 px grid while dragging">
+                      <label title={t('snapHint')}>
                         <input
                           type="checkbox"
                           checked={snapToGrid}
                           onChange={(event) => setSnapToGrid(event.target.checked)}
                         />
-                        Snap
+                        {t('snap')}
                       </label>
                       {LAYER_ORDER.filter((layer) => model.elements.some((element) => getElementType(element.type)?.layer === layer)).map((layer) => (
                         <label key={layer}>
@@ -1290,7 +1290,7 @@ export default function App() {
                   <div className="editor-area">{canvasElement}</div>
                   {magic && (
                     <div className="magic-menu">
-                      <strong>Choose relationship</strong>
+                      <strong>{t('chooseRelationship')}</strong>
                       <span>
                         {primaryText(model.elements.find((element) => element.id === magic.sourceElementId)?.name ?? [])} →{' '}
                         {primaryText(model.elements.find((element) => element.id === magic.targetElementId)?.name ?? [])}
@@ -1302,7 +1302,7 @@ export default function App() {
                           </button>
                         ))}
                       </div>
-                      <button className="link-button" onClick={() => setMagic(null)}>Cancel</button>
+                      <button className="link-button" onClick={() => setMagic(null)}>{t('cancel')}</button>
                     </div>
                   )}
                 </>
@@ -1373,7 +1373,7 @@ export default function App() {
                   }}
                 />
               ) : tab === 'enrichment' ? (
-                <Suspense fallback={<div className="placeholder">Loading…</div>}>
+                <Suspense fallback={<div className="placeholder">{t('loading')}</div>}>
                   <Enrichment
                     model={model}
                     onApply={(elements, relationships) => {
@@ -1393,7 +1393,7 @@ export default function App() {
                   onSelectElement={(id) => { setSelectedElementId(id); setTab('editor'); }}
                 />
               ) : tab === 'ai' ? (
-                <Suspense fallback={<div className="placeholder">Loading…</div>}>
+                <Suspense fallback={<div className="placeholder">{t('loading')}</div>}>
                   <AiPanel
                     model={model}
                     onReplaceModel={(next) => {

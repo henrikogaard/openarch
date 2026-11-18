@@ -493,7 +493,7 @@ function CanvasFlow({
               <input
                 autoFocus
                 type="search"
-                placeholder="Search element types…"
+                placeholder={t('searchElementTypes')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
@@ -533,9 +533,7 @@ function CanvasFlow({
           )}
         </Panel>
         <Panel position="top-right" className="canvas-hint">
-          Drag a handle between elements to connect · drag a palette item onto the canvas · double-click a node to
-          rename or an edge to add a bendpoint · right-click for the context menu · ⌘/Ctrl+C/V/D copy, paste,
-          duplicate · Delete removes the selection
+          {t('canvasHint')}
         </Panel>
         {selectionCount > 0 && (
           <Panel position="bottom-center" className="selection-bar">
@@ -547,41 +545,41 @@ function CanvasFlow({
               <>
                 <select
                   value=""
-                  aria-label="Align selection"
+                  aria-label={t('alignSelection')}
                   onChange={(event) => {
                     if (event.target.value) onAlign(event.target.value as NodeAlignment);
                   }}
                 >
-                  <option value="">Align…</option>
-                  <option value="left">Left</option>
-                  <option value="center-x">Center</option>
-                  <option value="right">Right</option>
-                  <option value="top">Top</option>
-                  <option value="center-y">Middle</option>
-                  <option value="bottom">Bottom</option>
+                  <option value="">{t('align')}</option>
+                  <option value="left">{t('alignLeft')}</option>
+                  <option value="center-x">{t('alignCenter')}</option>
+                  <option value="right">{t('alignRight')}</option>
+                  <option value="top">{t('alignTop')}</option>
+                  <option value="center-y">{t('alignMiddle')}</option>
+                  <option value="bottom">{t('alignBottom')}</option>
                 </select>
                 <select
                   value=""
-                  aria-label="Distribute selection"
+                  aria-label={t('distributeSelection')}
                   onChange={(event) => {
                     if (event.target.value) onDistribute(event.target.value as 'x' | 'y');
                   }}
                 >
-                  <option value="">Distribute…</option>
-                  <option value="x">Horizontally</option>
-                  <option value="y">Vertically</option>
+                  <option value="">{t('distribute')}</option>
+                  <option value="x">{t('distributeHorizontal')}</option>
+                  <option value="y">{t('distributeVertical')}</option>
                 </select>
-                {!selectionHasParent && <button onClick={onGroup}>Group</button>}
-                {selectionHasParent && <button onClick={onUngroup}>Ungroup</button>}
+                {!selectionHasParent && <button onClick={onGroup}>{t('group')}</button>}
+                {selectionHasParent && <button onClick={onUngroup}>{t('ungroup')}</button>}
               </>
             )}
             {selectedNodeIds.length > 0 && (
               <>
-                <button onClick={() => onZOrder('front')} title="Bring to front">
-                  Front
+                <button onClick={() => onZOrder('front')} title={t('bringToFront')}>
+                  {t('front')}
                 </button>
-                <button onClick={() => onZOrder('back')} title="Send to back">
-                  Back
+                <button onClick={() => onZOrder('back')} title={t('sendToBack')}>
+                  {t('back')}
                 </button>
               </>
             )}
@@ -655,7 +653,7 @@ function CanvasFlow({
                   setContextMenu(null);
                 }}
               >
-                Rename…
+                {t('renameEllipsis')}
               </button>
               <button
                 onClick={() => {
@@ -663,7 +661,7 @@ function CanvasFlow({
                   setContextMenu(null);
                 }}
               >
-                Duplicate
+                {t('duplicate')}
               </button>
               <button
                 onClick={() => {
@@ -671,7 +669,7 @@ function CanvasFlow({
                   setContextMenu(null);
                 }}
               >
-                Delete
+                {t('delete')}
               </button>
             </>
           ) : (
@@ -682,7 +680,7 @@ function CanvasFlow({
                 setContextMenu(null);
               }}
             >
-              Paste
+              {t('paste')}
             </button>
           )}
         </div>

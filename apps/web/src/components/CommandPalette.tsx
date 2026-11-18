@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from '../i18n';
 
 export interface CommandItem {
   id: string;
@@ -30,6 +31,7 @@ function matches(item: CommandItem, query: string): boolean {
  * Arrow keys move, Enter runs, Escape closes.
  */
 export default function CommandPalette({ open, items, onClose, onRun }: CommandPaletteProps) {
+  const t = useTranslation();
   const [query, setQuery] = useState('');
   const [highlighted, setHighlighted] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -60,13 +62,13 @@ export default function CommandPalette({ open, items, onClose, onRun }: CommandP
   };
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Command palette" onClick={onClose}>
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('commandPalette')} onClick={onClose}>
       <div className="command-palette" onClick={(event) => event.stopPropagation()}>
         <input
           ref={inputRef}
           className="command-input"
           type="search"
-          placeholder="Search workspaces, views, elements, actions…"
+          placeholder={t('palettePlaceholder')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -86,7 +88,7 @@ export default function CommandPalette({ open, items, onClose, onRun }: CommandP
           }}
         />
         <div className="command-list" ref={listRef}>
-          {results.length === 0 && <div className="command-empty">No matches</div>}
+          {results.length === 0 && <div className="command-empty">{t('noMatches')}</div>}
           {results.map((item, index) => (
             <button
               key={item.id}
