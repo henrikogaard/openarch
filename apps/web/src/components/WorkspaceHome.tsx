@@ -286,7 +286,7 @@ export default function WorkspaceHome({
       </main>
 
       {creating && (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('newWorkspace')}>
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('newWorkspace')} onKeyDown={(e) => { if (e.key === 'Escape') setCreating(false); }}>
           <div className="modal">
             <header className="modal-header">
               <h2>{t('newWorkspace')}</h2>

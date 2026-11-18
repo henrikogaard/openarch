@@ -1722,7 +1722,15 @@ export default function App() {
         )}
 
         {conflict && model && (
-          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Save conflict">
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Save conflict"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setConflict(null);
+            }}
+          >
             <div className="modal">
               <header className="modal-header">
                 <h2>Save conflict</h2>

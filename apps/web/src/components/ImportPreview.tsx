@@ -67,7 +67,15 @@ export default function ImportPreview(props: ImportPreviewProps) {
 
   return (
     <div className="import-overlay">
-      <div className="import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-preview-title">
+      <div
+        className="import-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-preview-title"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onCancel();
+        }}
+      >
         <header className="import-dialog-header">
           <h2 id="import-preview-title">Import preview</h2>
           <p className="muted">

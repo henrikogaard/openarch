@@ -26,7 +26,7 @@ export default function GitConfigDialog({ onConnect, onCancel }: GitConfigDialog
   const valid = owner.trim() && repo.trim() && branch.trim() && token.trim();
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Connect Git repository">
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Connect Git repository" onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}>
       <div className="modal">
         <header className="modal-header">
           <h2>Connect Git repository</h2>
