@@ -1387,6 +1387,10 @@ export default function App() {
                       }));
                       notify(`Added ${elements.length} enriched elements — remember to save`);
                     }}
+                    onApplyModel={(next) => {
+                      commit(() => next);
+                      notify('Applied IaC drift');
+                    }}
                   />
                 </Suspense>
               ) : tab === 'artefacts' ? (

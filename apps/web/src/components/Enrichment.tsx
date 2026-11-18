@@ -9,10 +9,14 @@ import {
   type RawResource,
 } from '@openarch/enrichment';
 import {
+  applyIacDrift,
+  diffIacImport,
+  iacAddressOf,
   mapResources,
   parseDockerCompose,
   parseKubernetes,
   parseTerraformPlan,
+  type IacDrift,
   type IacImport,
 } from '@openarch/iac';
 import { useMemo, useState } from 'react';
@@ -20,6 +24,7 @@ import { useMemo, useState } from 'react';
 interface EnrichmentProps {
   model: Model;
   onApply: (elements: ArchiElement[], relationships: Relationship[]) => void;
+  onApplyModel: (next: Model) => void;
 }
 
 type InputMode = 'csv' | 'files' | 'iac';
@@ -49,13 +54,47 @@ const IAC_LABEL: Record<IacKind, string> = {
 };
 
 export default function Enrichment(props: EnrichmentProps) {
-  const { model, onApply } = props;
+  const { model, onApply, onApplyModel } = props;
   const [mode, setMode] = useState<InputMode>('csv');
   const [csvText, setCsvText] = useState('');
   const [filesText, setFilesText] = useState('');
   const [iacKind, setIacKind] = useState<IacKind>('terraform');
   const [iacText, setIacText] = useState('');
   const [iacResult, setIacResult] = useState<IacImport | null>(null);
+  const [ignoredDrift, setIgnoredDrift] = useState<Set<string>>(new Set());
+
+  // Re-importing IaC against a model that already has iac-sourced elements is a
+  // drift check: +added / ~changed / -removed, applicable per resource.
+  const drift: IacDrift | null = useMemo(
+    () => (iacResult ? diffIacImport(model, iacResult) : null),
+    [iacResult, model],
+  );
+  const activeDrift = useMemo(() => {
+    if (!drift) return null;
+    return {
+      added: drift.added.filter((e) => !ignoredDrift.has(iacAddressOf(e) ?? '')),
+      removed: drift.removed.filter((e) => !ignoredDrift.has(iacAddressOf(e) ?? '')),
+      changed: drift.changed.filter((c) => !ignoredDrift.has(iacAddressOf(c.incoming) ?? '')),
+    };
+  }, [drift, ignoredDrift]);
+  const driftTotal = drift
+    ? drift.added.length + drift.removed.length + drift.changed.length
+    : 0;
+
+  const toggleDriftIgnore = (address: string) => {
+    setIgnoredDrift((current) => {
+      const next = new Set(current);
+      if (next.has(address)) next.delete(address);
+      else next.add(address);
+      return next;
+    });
+  };
+
+  const applyDrift = () => {
+    if (!iacResult || !activeDrift) return;
+    onApplyModel(applyIacDrift(model, activeDrift, iacResult.relationships));
+    setIgnoredDrift(new Set());
+  };
   const [error, setError] = useState('');
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -285,6 +324,64 @@ export default function Enrichment(props: EnrichmentProps) {
                       </li>
                     ))}
                   </ul>
+                )}
+                {drift && driftTotal > 0 && (
+                  <div className="panel-card">
+                    <h3>Drift vs current model</h3>
+                    <div className="stat-inline">
+                      <span className="issue-badge info">+{activeDrift!.added.length} added</span>
+                      <span className="issue-badge warning">~{activeDrift!.changed.length} changed</span>
+                      <span className="issue-badge danger">−{activeDrift!.removed.length} removed</span>
+                      {ignoredDrift.size > 0 && (
+                        <span className="issue-badge info">{ignoredDrift.size} ignored</span>
+                      )}
+                    </div>
+                    <ul className="issue-list">
+                      {drift.added.map((element) => (
+                        <li key={`a-${element.id}`}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Ignore added ${iacAddressOf(element)}`}
+                            checked={!ignoredDrift.has(iacAddressOf(element) ?? '')}
+                            onChange={() => toggleDriftIgnore(iacAddressOf(element) ?? '')}
+                          />
+                          <span className="issue-badge info">+</span>
+                          <span>{iacAddressOf(element)}</span>
+                        </li>
+                      ))}
+                      {drift.changed.map((change) => (
+                        <li key={`c-${change.incoming.id}`}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Ignore changed ${iacAddressOf(change.incoming)}`}
+                            checked={!ignoredDrift.has(iacAddressOf(change.incoming) ?? '')}
+                            onChange={() => toggleDriftIgnore(iacAddressOf(change.incoming) ?? '')}
+                          />
+                          <span className="issue-badge warning">~</span>
+                          <span>
+                            {iacAddressOf(change.incoming)} ({change.current.type} → {change.incoming.type})
+                          </span>
+                        </li>
+                      ))}
+                      {drift.removed.map((element) => (
+                        <li key={`r-${element.id}`}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Ignore removed ${iacAddressOf(element)}`}
+                            checked={!ignoredDrift.has(iacAddressOf(element) ?? '')}
+                            onChange={() => toggleDriftIgnore(iacAddressOf(element) ?? '')}
+                          />
+                          <span className="issue-badge danger">−</span>
+                          <span>{iacAddressOf(element)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="enrichment-actions">
+                      <button className="primary-button" onClick={applyDrift}>
+                        Apply drift ({activeDrift!.added.length + activeDrift!.changed.length + activeDrift!.removed.length})
+                      </button>
+                    </div>
+                  </div>
                 )}
                 <div className="enrichment-actions">
                   <button

@@ -146,6 +146,14 @@ function createElement(resource: IacResource, type: string, options: IacOptions)
     { key: 'iacKind', value: resource.kind },
   ];
   if (environment) properties.push({ key: 'environment', value: environment });
+  // Stable digest of the resource attributes so re-imports can detect drift.
+  const attributeKeys = Object.keys(resource.attributes).sort();
+  if (attributeKeys.length) {
+    properties.push({
+      key: 'iacAttributes',
+      value: JSON.stringify(attributeKeys.map((key) => [key, resource.attributes[key]])),
+    });
+  }
 
   const provider = resource.provider ? ` (${resource.provider})` : '';
   const element: ArchiElement = {
