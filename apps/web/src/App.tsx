@@ -8,6 +8,7 @@ import {
   createModel,
   createSampleModel,
   diffModels,
+  diffSummary,
   distributeNodes,
   duplicateElements,
   elementRefsForNodes,
@@ -15,6 +16,7 @@ import {
   getElementType,
   groupNodes,
   LAYER_LABELS,
+  mergeModels,
   LAYER_ORDER,
   parseAoef,
   primaryText,
@@ -614,9 +616,15 @@ export default function App() {
     }
   };
 
-  const confirmImport = async (mode: 'replace' | 'add') => {
+  const confirmImport = async (mode: 'replace' | 'add' | 'merge') => {
     if (!pendingImport) return;
     const imported = pendingImport.incoming;
+    if (mode === 'merge' && model) {
+      commit(() => mergeModels(model, imported));
+      setPendingImport(null);
+      notify(`Merged ${diffSummary(diffModels(model, imported))} into current workspace`);
+      return;
+    }
     try {
       await repository.saveModel(imported);
       await refreshWorkspaces();
@@ -627,7 +635,6 @@ export default function App() {
       return;
     }
     setPendingImport(null);
-    void mode;
   };
 
   const currentView = model?.views[activeViewIndex];
@@ -1610,6 +1617,7 @@ export default function App() {
             current={model}
             onReplace={() => void confirmImport('replace')}
             onAddAsNew={() => void confirmImport('add')}
+            onMerge={() => void confirmImport('merge')}
             onCancel={() => setPendingImport(null)}
           />
         )}

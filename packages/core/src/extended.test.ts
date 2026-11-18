@@ -6,6 +6,7 @@ import {
   buildPresetMatrix,
   createSampleModel,
   diffModels,
+  mergeModels,
   ELEMENT_TYPES,
   filterModelByViewpoint,
   getMetamodel,
@@ -241,5 +242,28 @@ describe('waivers', () => {
     // A rule-only waiver excuses all entities of that rule.
     const all = applyWaivers(issues, [{ id: 'w2', rule: 'element-without-domain', reason: 'bulk', createdAt: '' }]);
     expect(all.map((issue) => issue.rule)).toEqual(['relationship.dangling']);
+  });
+});
+
+describe('mergeModels', () => {
+  it('unions models with incoming winning conflicts and no dangling refs', () => {
+    const current = createSampleModel();
+    const incoming = createSampleModel();
+    // incoming renames e-portal and adds one element
+    incoming.elements = incoming.elements.map((e) =>
+      e.id === 'e-portal' ? { ...e, name: [{ lang: 'en', value: 'Claims Portal v2' }] } : e,
+    );
+    incoming.elements.push({
+      id: 'e-new',
+      type: 'Node',
+      name: [{ lang: 'en', value: 'New node' }],
+      documentation: [],
+      properties: [],
+    });
+    const merged = mergeModels(current, incoming);
+    expect(merged.elements.find((e) => e.id === 'e-portal')?.name[0].value).toBe('Claims Portal v2');
+    expect(merged.elements.some((e) => e.id === 'e-new')).toBe(true);
+    expect(merged.elements.length).toBe(current.elements.length + 1);
+    expect(validateModel(merged).some((i) => i.rule === 'relationship.dangling')).toBe(false);
   });
 });

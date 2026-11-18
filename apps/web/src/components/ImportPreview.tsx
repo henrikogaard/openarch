@@ -6,6 +6,7 @@ interface ImportPreviewProps {
   current: Model;
   onReplace: () => void;
   onAddAsNew: () => void;
+  onMerge?: () => void;
   onCancel: () => void;
 }
 
@@ -49,7 +50,7 @@ function DiffSection({ title, entries }: { title: string; entries: DiffEntry[] }
 }
 
 export default function ImportPreview(props: ImportPreviewProps) {
-  const { diff, incoming, current, onReplace, onAddAsNew, onCancel } = props;
+  const { diff, incoming, current, onReplace, onAddAsNew, onMerge, onCancel } = props;
 
   const addedElements: DiffEntry[] = diff.addedElements.map((item) => ({ badge: '+', tone: 'info', main: item }));
   const removedElements: DiffEntry[] = diff.removedElements.map((item) => ({ badge: '−', tone: 'error', main: item }));
@@ -89,6 +90,11 @@ export default function ImportPreview(props: ImportPreviewProps) {
 
         <footer className="import-dialog-footer">
           <button className="primary-button" onClick={onReplace}>Replace current model</button>
+          {onMerge && (
+            <button className="small-button" onClick={onMerge} title="Apply incoming changes onto the current model; nothing is deleted">
+              Merge into current
+            </button>
+          )}
           <button className="small-button" onClick={onAddAsNew}>Add as new model</button>
           <button className="link-button" onClick={onCancel}>Cancel</button>
         </footer>

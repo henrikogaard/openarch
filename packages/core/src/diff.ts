@@ -114,3 +114,38 @@ export function hasChanges(diff: ModelDiff): boolean {
     diff.removedViews.length > 0
   );
 }
+
+/**
+ * Merge an incoming model into the current one: incoming wins on conflicts
+ * (same id), current-only entities are kept, and view references that would
+ * dangle are pruned. Unlike replace, nothing in the current model is deleted.
+ */
+export function mergeModels(current: Model, incoming: Model): Model {
+  const elements = new Map(current.elements.map((element) => [element.id, element]));
+  for (const element of incoming.elements) elements.set(element.id, element);
+  const relationships = new Map(current.relationships.map((relationship) => [relationship.id, relationship]));
+  for (const relationship of incoming.relationships) relationships.set(relationship.id, relationship);
+  const views = new Map(current.views.map((view) => [view.id, view]));
+  for (const view of incoming.views) views.set(view.id, view);
+
+  const elementIds = new Set(elements.keys());
+  const relationshipIds = new Set(relationships.keys());
+  const cleanViews = [...views.values()].map((view) => {
+    const nodes = view.nodes.filter((node) => !node.elementRef || elementIds.has(node.elementRef));
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = view.edges.filter(
+      (edge) =>
+        nodeIds.has(edge.source) &&
+        nodeIds.has(edge.target) &&
+        relationshipIds.has(edge.relationshipRef),
+    );
+    return { ...view, nodes, edges };
+  });
+
+  return {
+    ...current,
+    elements: [...elements.values()],
+    relationships: [...relationships.values()],
+    views: cleanViews,
+  };
+}
