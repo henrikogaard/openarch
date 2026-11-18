@@ -279,3 +279,44 @@ describe('server integration', () => {
     expect(Array.isArray(validation.body.issues)).toBe(true);
   });
 });
+
+describe('governance: waivers and approvals', () => {
+  it('creates, lists, and deletes waivers; approving a snapshot sets the baseline', async () => {
+    const created = await json<{ id: string }>('/api/models/sample-model/snapshots', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ label: 'Governance test baseline' }),
+    });
+    expect(created.status).toBe(201);
+
+    const waiver = await json<{ id: string; rule: string }>('/api/models/sample-model/waivers', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ rule: 'element-without-domain', reason: 'Legacy import, domain TBD' }),
+    });
+    expect(waiver.status).toBe(201);
+    expect(waiver.body.rule).toBe('element-without-domain');
+
+    const list = await json<Array<{ id: string }>>('/api/models/sample-model/waivers', { headers: admin });
+    expect(list.body.some((w) => w.id === waiver.body.id)).toBe(true);
+
+    const approval = await json<{ decision: string }>('/api/models/sample-model/approvals', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ baselineId: created.body.id, decision: 'approved', comment: 'LGTM' }),
+    });
+    expect(approval.status).toBe(201);
+    expect(approval.body.decision).toBe('approved');
+
+    const model = await json<{ baselineId?: string }>('/api/models/sample-model', { headers: admin });
+    expect(model.body.baselineId).toBe(created.body.id);
+
+    const removed = await json('/api/models/sample-model/waivers/' + waiver.body.id, {
+      method: 'DELETE',
+      headers: admin,
+    });
+    expect(removed.status).toBe(204);
+    const after = await json<Array<{ id: string }>>('/api/models/sample-model/waivers', { headers: admin });
+    expect(after.body.some((w) => w.id === waiver.body.id)).toBe(false);
+  });
+});

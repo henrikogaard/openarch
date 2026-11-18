@@ -1,5 +1,5 @@
 import { getElementType, getRelationshipType, isAllowedRelationship, metamodelVersions } from './metamodel';
-import type { Model } from './types';
+import type { Model, Waiver } from './types';
 import { primaryText } from './types';
 
 export interface ValidationIssue {
@@ -13,6 +13,17 @@ export interface ValidationIssue {
 export interface ValidationOptions {
   /** Elevate notation/style findings to errors. */
   strict?: boolean;
+}
+
+/** Drop issues excused by waivers (rule match, optionally scoped to one entity). */
+export function applyWaivers(issues: ValidationIssue[], waivers: Waiver[] = []): ValidationIssue[] {
+  if (!waivers.length) return issues;
+  return issues.filter(
+    (issue) =>
+      !waivers.some(
+        (waiver) => waiver.rule === issue.rule && (!waiver.entityId || waiver.entityId === issue.entityId),
+      ),
+  );
 }
 
 /** Structural checks that run identically in the browser, server, and CLI. */

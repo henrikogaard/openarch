@@ -1,4 +1,13 @@
-import { diffModels, primaryText, type AuditEvent, type Comment, type Model, type ModelDiff } from '@openarch/core';
+import {
+  diffModels,
+  primaryText,
+  type Approval,
+  type AuditEvent,
+  type Comment,
+  type Model,
+  type ModelDiff,
+  type Waiver,
+} from '@openarch/core';
 import { type ServerRepository } from '@openarch/repository';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -22,6 +31,10 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [diff, setDiff] = useState<Record<string, unknown> | null>(null);
   const [snapshotDiffs, setSnapshotDiffs] = useState<Record<string, ModelDiff>>({});
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [waivers, setWaivers] = useState<Waiver[]>([]);
+  const [waiverRule, setWaiverRule] = useState('');
+  const [waiverReason, setWaiverReason] = useState('');
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -29,16 +42,20 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
   const refresh = useCallback(async () => {
     if (!repository) return;
     try {
-      const [nextComments, nextAudit, nextSnapshots, nextDiff] = await Promise.all([
+      const [nextComments, nextAudit, nextSnapshots, nextDiff, nextApprovals, nextWaivers] = await Promise.all([
         repository.listComments(modelId),
         repository.listAudit(modelId),
         repository.listSnapshots(modelId),
         repository.getDiff(modelId),
+        repository.listApprovals?.(modelId) ?? Promise.resolve([]),
+        repository.listWaivers?.(modelId) ?? Promise.resolve([]),
       ]);
       setComments(nextComments as Comment[]);
       setAudit(nextAudit as AuditEvent[]);
       setSnapshots(nextSnapshots as SnapshotMeta[]);
       setDiff(nextDiff as Record<string, unknown>);
+      setApprovals(nextApprovals as Approval[]);
+      setWaivers(nextWaivers as Waiver[]);
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -92,6 +109,39 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy('');
+    }
+  };
+
+  const approve = async (snapshot: SnapshotMeta, decision: 'approved' | 'rejected') => {
+    setBusy(snapshot.id);
+    try {
+      await repository.recordApproval?.(modelId, snapshot.id, decision, `Reviewed via governance UI`);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const addWaiver = async () => {
+    if (!waiverRule.trim() || !waiverReason.trim()) return;
+    try {
+      await repository.addWaiver?.(modelId, { rule: waiverRule.trim(), reason: waiverReason.trim() });
+      setWaiverRule('');
+      setWaiverReason('');
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const removeWaiver = async (waiver: Waiver) => {
+    try {
+      await repository.deleteWaiver?.(modelId, waiver.id);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
@@ -160,6 +210,21 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
                 <button className="small-button" disabled={busy === snapshot.id} onClick={() => void restore(snapshot)}>
                   Restore
                 </button>
+                <button
+                  className="small-button"
+                  disabled={busy === snapshot.id || approvals.some((a) => a.baselineId === snapshot.id)}
+                  onClick={() => void approve(snapshot, 'approved')}
+                  title="Approve this snapshot as the baseline"
+                >
+                  Approve
+                </button>
+                <button
+                  className="small-button"
+                  disabled={busy === snapshot.id || approvals.some((a) => a.baselineId === snapshot.id)}
+                  onClick={() => void approve(snapshot, 'rejected')}
+                >
+                  Reject
+                </button>
                 {snapshotDiffs[snapshot.id] && (
                   <pre className="diff-block">
                     {Object.entries(snapshotDiffs[snapshot.id])
@@ -180,6 +245,66 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
                 .join('\n')}
             </pre>
           )}
+        </section>
+
+        <section className="panel-card">
+          <h3>Approvals</h3>
+          <ul className="relation-list">
+            {approvals.map((approval) => (
+              <li key={approval.id}>
+                <span className={`chip ${approval.decision === 'approved' ? 'status-approved' : 'status-draft'}`}>
+                  {approval.decision}
+                </span>
+                <strong>{approval.actor}</strong>
+                <span className="muted">baseline {approval.baselineId.slice(0, 18)}…</span>
+                {approval.comment && <span className="muted">— {approval.comment}</span>}
+                <time>{new Date(approval.createdAt).toLocaleString()}</time>
+              </li>
+            ))}
+            {approvals.length === 0 && <li className="empty">No approvals yet — approve a snapshot above.</li>}
+          </ul>
+          {model.baselineId && (
+            <p className="muted">Current approved baseline: {model.baselineId.slice(0, 24)}…</p>
+          )}
+        </section>
+
+        <section className="panel-card">
+          <h3>Check waivers</h3>
+          <ul className="relation-list">
+            {waivers.map((waiver) => (
+              <li key={waiver.id}>
+                <span className="chip">{waiver.rule}</span>
+                <span>{waiver.reason}</span>
+                <button className="small-button" onClick={() => void removeWaiver(waiver)}>
+                  Remove
+                </button>
+              </li>
+            ))}
+            {waivers.length === 0 && (
+              <li className="empty">No waivers — `openarch check` findings can be waived here.</li>
+            )}
+          </ul>
+          <div className="field-row">
+            <input
+              className="form-input"
+              placeholder="rule (e.g. element-without-domain)"
+              value={waiverRule}
+              onChange={(event) => setWaiverRule(event.target.value)}
+            />
+            <input
+              className="form-input"
+              placeholder="reason"
+              value={waiverReason}
+              onChange={(event) => setWaiverReason(event.target.value)}
+            />
+            <button
+              className="small-button"
+              disabled={!waiverRule.trim() || !waiverReason.trim()}
+              onClick={() => void addWaiver()}
+            >
+              Add waiver
+            </button>
+          </div>
         </section>
 
         <section className="panel-card wide">

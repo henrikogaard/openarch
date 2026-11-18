@@ -1,4 +1,4 @@
-import type { Model, SavedView } from '@openarch/core';
+import type { Model, SavedView, Waiver } from '@openarch/core';
 import { type ModelRepository, summarize } from './types';
 
 export interface ModelMeta {
@@ -132,5 +132,40 @@ export class ServerRepository implements ModelRepository {
       `/models/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}/restore`,
       { method: 'POST' },
     ) as Promise<Model>;
+  }
+
+  listApprovals(id: string): Promise<unknown[]> {
+    return this.request(`/models/${encodeURIComponent(id)}/approvals`);
+  }
+
+  recordApproval(
+    id: string,
+    baselineId: string,
+    decision: 'approved' | 'rejected',
+    comment?: string,
+  ): Promise<unknown> {
+    return this.request(`/models/${encodeURIComponent(id)}/approvals`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baselineId, decision, comment }),
+    });
+  }
+
+  listWaivers(id: string): Promise<Waiver[]> {
+    return this.request(`/models/${encodeURIComponent(id)}/waivers`);
+  }
+
+  addWaiver(id: string, waiver: { rule: string; entityId?: string; reason: string }): Promise<Waiver> {
+    return this.request(`/models/${encodeURIComponent(id)}/waivers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(waiver),
+    });
+  }
+
+  deleteWaiver(id: string, waiverId: string): Promise<void> {
+    return this.request(`/models/${encodeURIComponent(id)}/waivers/${encodeURIComponent(waiverId)}`, {
+      method: 'DELETE',
+    });
   }
 }

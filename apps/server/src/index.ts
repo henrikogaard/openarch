@@ -17,6 +17,7 @@ import {
   RELATIONSHIP_TYPES,
   VIEWPOINTS,
   workspaceSummary,
+  type Waiver,
 } from '@openarch/core';
 import { MemoryRepository, parseNativeModel } from '@openarch/repository';
 import {
@@ -607,6 +608,52 @@ app.get('/api/portfolio', async (request, reply) => {
 
 // ── Governance ───────────────────────────────────────────────────────────────
 
+app.get('/api/models/:id/waivers', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  if (!requireMember(request, reply, workspace)) return;
+  return workspace.model.waivers ?? [];
+});
+
+app.post('/api/models/:id/waivers', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner', 'editor']);
+  if (!actor) return;
+  const body = (request.body ?? {}) as { rule?: string; entityId?: string; reason?: string };
+  if (!body.rule || !body.reason?.trim()) {
+    return reply.code(400).send({ error: 'rule and reason are required' });
+  }
+  const waiver: Waiver = {
+    id: `waiver-${crypto.randomUUID()}`,
+    rule: body.rule,
+    entityId: body.entityId || undefined,
+    reason: body.reason.trim(),
+    createdBy: actor.subject,
+    createdAt: new Date().toISOString(),
+  };
+  workspace.model.waivers = [...(workspace.model.waivers ?? []), waiver];
+  audit(workspace, actor.subject, 'update', `Waived rule ${waiver.rule}: ${waiver.reason}`);
+  persistToDisk();
+  return reply.code(201).send(waiver);
+});
+
+app.delete('/api/models/:id/waivers/:waiverId', async (request, reply) => {
+  const { id, waiverId } = request.params as { id: string; waiverId: string };
+  const workspace = workspaces.get(id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner', 'editor']);
+  if (!actor) return;
+  const before = workspace.model.waivers ?? [];
+  workspace.model.waivers = before.filter((waiver) => waiver.id !== waiverId);
+  if (workspace.model.waivers.length === before.length) {
+    return reply.code(404).send({ error: 'Waiver not found' });
+  }
+  audit(workspace, actor.subject, 'delete', `Removed waiver ${waiverId}`);
+  persistToDisk();
+  return reply.code(204).send();
+});
+
 app.get('/api/models/:id/approvals', async (request, reply) => {
   const workspace = workspaces.get((request.params as { id: string }).id);
   if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
@@ -625,6 +672,10 @@ app.post('/api/models/:id/approvals', async (request, reply) => {
   }
   if (!workspace.snapshots.some((snapshot) => snapshot.id === body.baselineId)) {
     return reply.code(400).send({ error: 'Unknown baseline' });
+  }
+  if (body.decision === 'approved') {
+    // The approved baseline becomes the workspace's current baseline.
+    workspace.model.baselineId = body.baselineId;
   }
   const approval = {
     id: `approval-${crypto.randomUUID()}`,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   allowedRelationships,
+  applyWaivers,
   buildMatrix,
   buildPresetMatrix,
   createSampleModel,
@@ -223,5 +224,22 @@ describe('plugins', () => {
     expect(validateWithPlugins(createSampleModel()).some((issue) => issue.rule === 'custom.sample')).toBe(
       true,
     );
+  });
+});
+
+describe('waivers', () => {
+  it('applyWaivers drops excused findings by rule and entity', () => {
+    const issues = [
+      { severity: 'warning' as const, rule: 'element-without-domain', entityId: 'e-1', message: 'x' },
+      { severity: 'warning' as const, rule: 'element-without-domain', entityId: 'e-2', message: 'y' },
+      { severity: 'error' as const, rule: 'relationship.dangling', entityId: 'r-1', message: 'z' },
+    ];
+    const waived = applyWaivers(issues, [
+      { id: 'w1', rule: 'element-without-domain', entityId: 'e-1', reason: 'legacy', createdAt: '' },
+    ]);
+    expect(waived.map((issue) => issue.entityId)).toEqual(['e-2', 'r-1']);
+    // A rule-only waiver excuses all entities of that rule.
+    const all = applyWaivers(issues, [{ id: 'w2', rule: 'element-without-domain', reason: 'bulk', createdAt: '' }]);
+    expect(all.map((issue) => issue.rule)).toEqual(['relationship.dangling']);
   });
 });

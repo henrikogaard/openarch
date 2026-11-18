@@ -1,4 +1,4 @@
-import type { Model, ModelSummary, SavedView } from '@openarch/core';
+import type { Model, ModelSummary, SavedView, Waiver } from '@openarch/core';
 import { workspaceSummary } from '@openarch/core';
 
 /**
@@ -23,6 +23,12 @@ export interface ModelRepository {
   getSnapshot?(modelId: string, snapshotId: string): Promise<Model>;
   restoreSnapshot?(modelId: string, snapshotId: string): Promise<Model>;
   createSnapshot?(modelId: string, label?: string): Promise<unknown>;
+  /** Server-mode governance: approvals and check waivers. */
+  listApprovals?(modelId: string): Promise<unknown[]>;
+  recordApproval?(modelId: string, baselineId: string, decision: 'approved' | 'rejected', comment?: string): Promise<unknown>;
+  listWaivers?(modelId: string): Promise<Waiver[]>;
+  addWaiver?(modelId: string, waiver: { rule: string; entityId?: string; reason: string }): Promise<Waiver>;
+  deleteWaiver?(modelId: string, waiverId: string): Promise<void>;
 }
 
 export function summarize(model: Model): ModelSummary {

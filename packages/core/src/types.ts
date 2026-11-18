@@ -198,6 +198,16 @@ export interface Approval {
   createdAt: string;
 }
 
+/** A waiver excuses a specific validation/check finding (rule + optional entity). */
+export interface Waiver {
+  id: string;
+  rule: string;
+  entityId?: string;
+  reason: string;
+  createdBy?: string;
+  createdAt: string;
+}
+
 export interface Model {
   id: string;
   name: LocalizedText[];
@@ -217,6 +227,9 @@ export interface Model {
   domains?: Domain[];
   artefacts?: Artefact[];
   approvals?: Approval[];
+  waivers?: Waiver[];
+  /** Currently approved baseline snapshot id, if any. */
+  baselineId?: string;
   /** ISO timestamp of the last save; stamped by the repository. */
   updatedAt?: string;
   createdAt?: string;
