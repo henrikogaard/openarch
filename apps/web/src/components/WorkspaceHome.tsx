@@ -4,7 +4,7 @@ import {
   type ModelSummary,
   type WorkspaceStatus,
 } from '@openarch/core';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 export interface CreateWorkspaceInput {
   name: string;
@@ -26,6 +26,9 @@ interface WorkspaceHomeProps {
   onOpenPortfolio: () => void;
   onExportAll: () => void;
   onImportBackup: (file: File) => void;
+  /** When set true, open the create dialog / import picker (onboarding). */
+  createSignal?: number;
+  importSignal?: number;
 }
 
 const PURPOSE_LABEL: Record<ModelPurpose, string> = {
@@ -72,6 +75,8 @@ export default function WorkspaceHome({
   onOpenPortfolio,
   onExportAll,
   onImportBackup,
+  createSignal,
+  importSignal,
 }: WorkspaceHomeProps) {
   const backupInput = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
@@ -79,6 +84,12 @@ export default function WorkspaceHome({
   const [purpose, setPurpose] = useState<'all' | ModelPurpose>('all');
   const [sort, setSort] = useState<'recent' | 'name'>('recent');
   const [creating, setCreating] = useState(false);
+  useEffect(() => {
+    if (createSignal) setCreating(true);
+  }, [createSignal]);
+  useEffect(() => {
+    if (importSignal) fileInput.current?.click();
+  }, [importSignal]);
   const [draft, setDraft] = useState<CreateWorkspaceInput>(EMPTY_DRAFT);
   const [tagText, setTagText] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);

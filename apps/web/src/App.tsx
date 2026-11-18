@@ -76,6 +76,7 @@ import ImportPreview from './components/ImportPreview';
 import Inspector from './components/Inspector';
 import InterfaceCatalog from './components/InterfaceCatalog';
 import MatrixView from './components/MatrixView';
+import OnboardingDialog from './components/OnboardingDialog';
 import Portfolio from './components/Portfolio';
 import SavedViews, { type SavedView } from './components/SavedViews';
 import Sidebar from './components/Sidebar';
@@ -167,6 +168,9 @@ export default function App() {
   const [presenting, setPresenting] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [conflict, setConflict] = useState<{ currentVersion?: number; current?: Model } | null>(null);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !localStorage.getItem('openarch-onboarded'));
+  const [createSignal, setCreateSignal] = useState(0);
+  const [importSignal, setImportSignal] = useState(0);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     localStorage.getItem('openarch-theme') === 'dark' ? 'dark' : 'light',
   );
@@ -1193,9 +1197,27 @@ export default function App() {
     );
   }
 
+  const dismissOnboarding = () => {
+    localStorage.setItem('openarch-onboarded', '1');
+    setOnboardingOpen(false);
+  };
+
   if (route === 'home') {
     return (
       <LanguageContext.Provider value={language}>
+        {onboardingOpen && (
+          <OnboardingDialog
+            onCreate={() => {
+              dismissOnboarding();
+              setCreateSignal((n) => n + 1);
+            }}
+            onImport={() => {
+              dismissOnboarding();
+              setImportSignal((n) => n + 1);
+            }}
+            onDismiss={dismissOnboarding}
+          />
+        )}
         <WorkspaceHome
           workspaces={workspaces}
           onCreate={createWorkspace}
@@ -1207,6 +1229,8 @@ export default function App() {
           onOpenPortfolio={openPortfolio}
           onExportAll={() => void exportAll()}
           onImportBackup={(file) => void importBackup(file)}
+          createSignal={createSignal}
+          importSignal={importSignal}
         />
         <CommandPalette
           open={paletteOpen}

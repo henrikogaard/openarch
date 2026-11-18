@@ -2,6 +2,8 @@ import { expect, type Locator, type Page } from '@playwright/test';
 
 /** Create a blank workspace from the home screen and land in the editor. */
 export async function createWorkspace(page: Page, name: string): Promise<void> {
+  // Skip the first-run onboarding dialog in tests.
+  await page.addInitScript(() => localStorage.setItem('openarch-onboarded', '1'));
   await page.goto('/');
   const newButton = page.getByRole('button', { name: /\+ New workspace/ }).first();
   await expect(newButton).toBeVisible();
