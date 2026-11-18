@@ -6,9 +6,14 @@ import {
   distributeNodes,
   duplicateElements,
   elementRefsForNodes,
+  groupNodes,
+  reconnectRelationship,
   relationshipRefsForEdges,
   removeElements,
   removeRelationships,
+  setEdgeBendpoints,
+  setNodeZOrder,
+  ungroupNodes,
 } from './workspace';
 
 describe('canvas editing helpers', () => {
@@ -148,5 +153,66 @@ describe('canvas editing helpers', () => {
     expect(ys).toEqual([80, 260, 440]);
 
     expect(distributeNodes(model, 'view-overview', ['n1', 'n2'], 'x')).toBe(model);
+  });
+
+  it('reconnectRelationship moves the relationship and its view edge endpoints', () => {
+    const model = createSampleModel();
+    // r-assign-1: e-customer -> e-claim, shown as ed1 (n1 -> n2).
+    const next = reconnectRelationship(model, 'r-assign-1', 'e-insurance', 'e-claim');
+    const rel = next.relationships.find((r) => r.id === 'r-assign-1')!;
+    expect(rel.source).toBe('e-insurance');
+    expect(rel.target).toBe('e-claim');
+    const edge = next.views[0].edges.find((e) => e.id === 'ed1')!;
+    expect(edge.source).toBe('n3'); // e-insurance's node
+    expect(edge.target).toBe('n2');
+    expect(reconnectRelationship(model, 'r-assign-1', 'e-claim', 'e-claim')).toBe(model);
+    expect(reconnectRelationship(model, 'nope', 'e-claim', 'e-insurance')).toBe(model);
+  });
+
+  it('setNodeZOrder moves nodes to front/back without touching others', () => {
+    const model = createSampleModel();
+    const front = setNodeZOrder(model, 'view-overview', ['n1', 'n2'], 'front');
+    const n1 = front.views[0].nodes.find((n) => n.id === 'n1')!;
+    const n3 = front.views[0].nodes.find((n) => n.id === 'n3')!;
+    expect(n1.zIndex).toBe(1);
+    expect(n3.zIndex).toBeUndefined();
+    const back = setNodeZOrder(front, 'view-overview', ['n1'], 'back');
+    expect(back.views[0].nodes.find((n) => n.id === 'n1')!.zIndex).toBe(-1);
+  });
+
+  it('groupNodes wraps members in a Group node and ungroupNodes restores them', () => {
+    const model = createSampleModel();
+    const grouped = groupNodes(model, 'view-overview', ['n1', 'n2']);
+    const view = grouped.views[0];
+    const groupNode = view.nodes[0];
+    expect(groupNode.type).toBe('Group');
+    expect(view.nodes.find((n) => n.id === 'n1')!.parentId).toBe(groupNode.id);
+    expect(view.nodes.find((n) => n.id === 'n2')!.parentId).toBe(groupNode.id);
+    expect(view.nodes.find((n) => n.id === 'n3')!.parentId).toBeUndefined();
+    expect(grouped.elements.some((e) => e.id === groupNode.elementRef && e.type === 'Grouping')).toBe(true);
+    // Group bounds enclose the members.
+    expect(groupNode.bounds.x).toBeLessThan(40);
+    expect(groupNode.bounds.y).toBeLessThan(80);
+
+    const ungrouped = ungroupNodes(grouped, 'view-overview', ['n1', 'n2']);
+    expect(ungrouped.views[0].nodes.find((n) => n.id === 'n1')!.parentId).toBeUndefined();
+    // The now-empty group node and its element are removed.
+    expect(ungrouped.views[0].nodes.some((n) => n.id === groupNode.id)).toBe(false);
+    expect(ungrouped.elements.some((e) => e.id === groupNode.elementRef)).toBe(false);
+    expect(groupNodes(model, 'view-overview', ['n1'])).toBe(model);
+  });
+
+  it('setEdgeBendpoints replaces bendpoints of one edge only', () => {
+    const model = createSampleModel();
+    const next = setEdgeBendpoints(model, 'view-overview', 'ed1', [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ]);
+    expect(next.views[0].edges.find((e) => e.id === 'ed1')!.bendpoints).toEqual([
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+    ]);
+    expect(next.views[0].edges.find((e) => e.id === 'ed2')!.bendpoints).toEqual([]);
+    expect(setEdgeBendpoints(model, 'view-overview', 'nope', [])).toBe(model);
   });
 });

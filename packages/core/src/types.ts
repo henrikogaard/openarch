@@ -111,6 +111,10 @@ export interface ViewNode {
   viewRef?: string;
   label: LocalizedText[];
   bounds: Bounds;
+  /** Native-only: parent container node id (RF nesting). Not exported to AOEF. */
+  parentId?: string;
+  /** Native-only: stacking order within the view. Not exported to AOEF. */
+  zIndex?: number;
   raw?: RawXml;
 }
 

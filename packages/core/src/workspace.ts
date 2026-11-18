@@ -327,6 +327,170 @@ export function distributeNodes(model: Model, viewId: string, nodeIds: string[],
   return { ...model, views: model.views.map((v) => (v.id === viewId ? { ...v, nodes } : v)) };
 }
 
+/** Reconnect a relationship to new endpoint elements and update its view edges. */
+export function reconnectRelationship(
+  model: Model,
+  relationshipId: string,
+  sourceElementId: string,
+  targetElementId: string,
+): Model {
+  if (sourceElementId === targetElementId) return model;
+  const relationship = model.relationships.find((candidate) => candidate.id === relationshipId);
+  if (!relationship) return model;
+  const relationships = model.relationships.map((candidate) =>
+    candidate.id === relationshipId
+      ? { ...candidate, source: sourceElementId, target: targetElementId }
+      : candidate,
+  );
+  const views = model.views.map((view) => ({
+    ...view,
+    edges: view.edges.map((edge) =>
+      edge.relationshipRef === relationshipId
+        ? {
+            ...edge,
+            source: view.nodes.find((node) => node.elementRef === sourceElementId)?.id ?? edge.source,
+            target: view.nodes.find((node) => node.elementRef === targetElementId)?.id ?? edge.target,
+          }
+        : edge,
+    ),
+  }));
+  return { ...model, relationships, views };
+}
+
+/** Move nodes to the front or back of the view's stacking order. */
+export function setNodeZOrder(model: Model, viewId: string, nodeIds: string[], position: 'front' | 'back'): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view || !view.nodes.some((node) => ids.has(node.id))) return model;
+  const others = view.nodes.filter((node) => !ids.has(node.id));
+  const max = Math.max(0, ...others.map((node) => node.zIndex ?? 0));
+  const min = Math.min(0, ...others.map((node) => node.zIndex ?? 0));
+  const nodes = view.nodes.map((node) =>
+    ids.has(node.id) ? { ...node, zIndex: position === 'front' ? max + 1 : min - 1 } : node,
+  );
+  return { ...model, views: model.views.map((candidate) => (candidate.id === viewId ? { ...candidate, nodes } : candidate)) };
+}
+
+/**
+ * Group the given nodes of one view under a new Group element: the group node
+ * is inserted first (React Flow requires parents before children) with bounds
+ * enclosing the members, and members get `parentId`.
+ */
+export function groupNodes(model: Model, viewId: string, nodeIds: string[]): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view) return model;
+  const members = view.nodes.filter((node) => ids.has(node.id) && !node.parentId);
+  if (members.length < 2) return model;
+
+  const minX = Math.min(...members.map((node) => node.bounds.x));
+  const minY = Math.min(...members.map((node) => node.bounds.y));
+  const maxX = Math.max(...members.map((node) => node.bounds.x + node.bounds.w));
+  const maxY = Math.max(...members.map((node) => node.bounds.y + node.bounds.h));
+  const groupElementId = `el-${crypto.randomUUID()}`;
+  const groupNodeId = `node-${crypto.randomUUID()}`;
+  const groupElement: ArchiElement = {
+    id: groupElementId,
+    type: 'Grouping',
+    name: [{ lang: 'en', value: 'Group' }],
+    documentation: [],
+    properties: [],
+  };
+  const groupNode: ViewNode = {
+    id: groupNodeId,
+    type: 'Group',
+    elementRef: groupElementId,
+    label: [],
+    bounds: { x: minX - 20, y: minY - 20, w: maxX - minX + 40, h: maxY - minY + 40 },
+  };
+  const nodes = [
+    groupNode,
+    ...view.nodes.map((node) => (ids.has(node.id) ? { ...node, parentId: groupNodeId } : node)),
+  ];
+  return {
+    ...model,
+    elements: [...model.elements, groupElement],
+    views: model.views.map((candidate) => (candidate.id === viewId ? { ...candidate, nodes } : candidate)),
+  };
+}
+
+/** Remove the given nodes from their parent container; drop the group if it becomes empty. */
+export function ungroupNodes(model: Model, viewId: string, nodeIds: string[]): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view) return model;
+  const parents = new Set(
+    view.nodes.filter((node) => ids.has(node.id) && node.parentId).map((node) => node.parentId!),
+  );
+  if (!parents.size) return model;
+  let nodes = view.nodes.map((node) => (ids.has(node.id) ? { ...node, parentId: undefined } : node));
+  const orphanedGroups = [...parents].filter(
+    (parentId) => !nodes.some((node) => node.parentId === parentId),
+  );
+  const orphanedElementRefs = new Set(
+    nodes.filter((node) => orphanedGroups.includes(node.id)).map((node) => node.elementRef),
+  );
+  nodes = nodes.filter((node) => !orphanedGroups.includes(node.id));
+  const elements = model.elements.filter((element) => !orphanedElementRefs.has(element.id));
+  const relationships = model.relationships.filter(
+    (relationship) => !orphanedElementRefs.has(relationship.source) && !orphanedElementRefs.has(relationship.target),
+  );
+  return {
+    ...model,
+    elements,
+    relationships,
+    views: model.views.map((candidate) => (candidate.id === viewId ? { ...candidate, nodes } : candidate)),
+  };
+}
+
+/** Replace the bendpoints of one view edge. */
+export function setEdgeBendpoints(model: Model, viewId: string, edgeId: string, bendpoints: Point[]): Model {
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view || !view.edges.some((edge) => edge.id === edgeId)) return model;
+  const edges = view.edges.map((edge) => (edge.id === edgeId ? { ...edge, bendpoints } : edge));
+  return { ...model, views: model.views.map((candidate) => (candidate.id === viewId ? { ...candidate, edges } : candidate)) };
+}
+
+/**
+ * Insert a bendpoint into a view edge at the segment closest to `point`
+ * (measured against the polyline source → bendpoints → target).
+ */
+export function addEdgeBendpoint(model: Model, viewId: string, edgeId: string, point: Point): Model {
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  const edge = view?.edges.find((candidate) => candidate.id === edgeId);
+  if (!view || !edge) return model;
+  const sourceNode = view.nodes.find((node) => node.id === edge.source);
+  const targetNode = view.nodes.find((node) => node.id === edge.target);
+  if (!sourceNode || !targetNode) return model;
+  const corners = [
+    { x: sourceNode.bounds.x + sourceNode.bounds.w, y: sourceNode.bounds.y + sourceNode.bounds.h / 2 },
+    ...edge.bendpoints,
+    { x: targetNode.bounds.x, y: targetNode.bounds.y + targetNode.bounds.h / 2 },
+  ];
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  for (let i = 0; i < corners.length - 1; i += 1) {
+    const distance = segmentDistance(corners[i], corners[i + 1], point);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i + 1;
+    }
+  }
+  const bendpoints = [...edge.bendpoints];
+  bendpoints.splice(bestIndex, 0, { x: Math.round(point.x), y: Math.round(point.y) });
+  return setEdgeBendpoints(model, viewId, edgeId, bendpoints);
+}
+
+function segmentDistance(a: Point, b: Point, p: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq));
+  const cx = a.x + t * dx;
+  const cy = a.y + t * dy;
+  return Math.hypot(p.x - cx, p.y - cy);
+}
+
 export interface DomainStat {
   domain: Domain;
   elementCount: number;

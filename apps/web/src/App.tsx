@@ -1,4 +1,5 @@
 import {
+  addEdgeBendpoint,
   alignNodes,
   allowedRelationships,
   assignElements,
@@ -12,14 +13,19 @@ import {
   elementRefsForNodes,
   filterModelByDomain,
   getElementType,
+  groupNodes,
   LAYER_LABELS,
   LAYER_ORDER,
   parseAoef,
   primaryText,
+  reconnectRelationship,
   relationshipRefsForEdges,
   removeElements,
   removeRelationships,
   serializeAoef,
+  setEdgeBendpoints,
+  setNodeZOrder,
+  ungroupNodes,
   type ArchiElement,
   type Artefact,
   type Bounds,
@@ -28,6 +34,7 @@ import {
   type ModelDiff,
   type ModelSummary,
   type NodeAlignment,
+  type Point,
   type RelationshipTypeDefinition,
   type View,
 } from '@openarch/core';
@@ -149,6 +156,7 @@ export default function App() {
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [snapToGrid, setSnapToGrid] = useState(true);
+  const [presenting, setPresenting] = useState(false);
   const modelRef = useRef<Model | null>(null);
   const clipboardRef = useRef<string[]>([]);
   const [clipboardCount, setClipboardCount] = useState(0);
@@ -754,6 +762,131 @@ export default function App() {
     if (clipboardRef.current.length) duplicateSelection(clipboardRef.current);
   };
 
+  const addElementAt = (type: string, position: Point) => {
+    const elementId = `el-${crypto.randomUUID()}`;
+    const nodeId = `node-${crypto.randomUUID()}`;
+    commit((current) => {
+      const index = current.elements.length;
+      const element: ArchiElement = {
+        id: elementId,
+        type,
+        name: [{ lang: 'en', value: `${getElementType(type)?.label ?? type} ${index + 1}` }],
+        documentation: [],
+        properties: [],
+        domain: domainFilter === 'all' ? undefined : domainFilter,
+        environment: environmentFilter === 'all' ? undefined : environmentFilter,
+      };
+      return {
+        ...current,
+        elements: [...current.elements, element],
+        views: current.views.map((view, viewIndex) =>
+          viewIndex === activeViewIndex
+            ? {
+                ...view,
+                nodes: [
+                  ...view.nodes,
+                  {
+                    id: nodeId,
+                    type: 'Element',
+                    elementRef: elementId,
+                    label: [],
+                    bounds: {
+                      x: Math.max(0, Math.round(position.x - 85)),
+                      y: Math.max(0, Math.round(position.y - 32)),
+                      w: 170,
+                      h: 64,
+                    },
+                  },
+                ],
+              }
+            : view,
+        ),
+      };
+    });
+    setSelectedElementId(elementId);
+  };
+
+  const reconnectEdge = (edgeId: string, sourceNodeId: string, targetNodeId: string) => {
+    const current = modelRef.current;
+    if (!current) return;
+    const sourceElementId = elementRefsForNodes(current, [sourceNodeId])[0];
+    const targetElementId = elementRefsForNodes(current, [targetNodeId])[0];
+    if (!sourceElementId || !targetElementId || sourceElementId === targetElementId) return;
+    const source = current.elements.find((element) => element.id === sourceElementId);
+    const target = current.elements.find((element) => element.id === targetElementId);
+    if (!source || !target) return;
+    if (!allowedRelationships(source.type, target.type).length) {
+      notify('No valid relationship for these element types');
+      return;
+    }
+    const relationshipIds = relationshipRefsForEdges(current, [edgeId]);
+    if (!relationshipIds.length) return;
+    commit((model) =>
+      relationshipIds.reduce(
+        (acc, relationshipId) => reconnectRelationship(acc, relationshipId, sourceElementId, targetElementId),
+        model,
+      ),
+    );
+    notify('Relationship reconnected');
+  };
+
+  const currentViewId = () => modelRef.current?.views[activeViewIndex]?.id;
+
+  const addBendpoint = (edgeId: string, point: Point) => {
+    const viewId = currentViewId();
+    if (!viewId) return;
+    commit((model) => addEdgeBendpoint(model, viewId, edgeId, point));
+  };
+
+  const moveBendpoint = useCallback(
+    (edgeId: string, index: number, point: Point) => {
+      const viewId = modelRef.current?.views[activeViewIndex]?.id;
+      const edge = viewId
+        ? modelRef.current?.views.find((v) => v.id === viewId)?.edges.find((e) => e.id === edgeId)
+        : undefined;
+      if (!viewId || !edge) return;
+      commit((model) =>
+        setEdgeBendpoints(
+          model,
+          viewId,
+          edgeId,
+          edge.bendpoints.map((b, i) => (i === index ? point : b)),
+        ),
+      );
+    },
+    [activeViewIndex, commit],
+  );
+
+  const groupSelection = () => {
+    const viewId = currentViewId();
+    if (!viewId || selectedNodeIds.length < 2) return;
+    commit((model) => groupNodes(model, viewId, selectedNodeIds));
+    notify(`Grouped ${selectedNodeIds.length} nodes`);
+  };
+
+  const ungroupSelection = () => {
+    const viewId = currentViewId();
+    if (!viewId) return;
+    commit((model) => ungroupNodes(model, viewId, selectedNodeIds));
+    notify('Ungrouped');
+  };
+
+  const zOrder = (position: 'front' | 'back') => {
+    const viewId = currentViewId();
+    if (!viewId || !selectedNodeIds.length) return;
+    commit((model) => setNodeZOrder(model, viewId, selectedNodeIds, position));
+  };
+
+  // Esc exits presentation mode.
+  useEffect(() => {
+    if (!presenting) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPresenting(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [presenting]);
+
   const updateModelMeta = (patch: Partial<Model>) => {
     commit((current) => ({ ...current, ...patch }));
   };
@@ -869,6 +1002,54 @@ export default function App() {
   const primaryTabs = PRIMARY_TABS;
   const analysisTabs: AnalysisTab[] = ['dashboard', 'eam', 'validation', 'trace', 'matrices', 'deployment', 'interfaces', 'domains'];
 
+  const canvasElement = model && scopedView ? (
+    <Canvas
+      view={scopedView}
+      elements={scopedModel?.elements ?? []}
+      relationships={scopedModel?.relationships ?? []}
+      domains={model.domains ?? []}
+      visibleLayers={visibleLayers}
+      environmentFilter={environmentFilter}
+      onSelectElement={setSelectedElementId}
+      onNodeMove={moveNode}
+      onAddElement={addElement}
+      onAddElementAt={addElementAt}
+      onConnect={requestConnection}
+      onReconnectEdge={reconnectEdge}
+      onAddBendpoint={addBendpoint}
+      onMoveBendpoint={moveBendpoint}
+      onNodesDelete={deleteNodes}
+      onEdgesDelete={deleteEdges}
+      onBulkAssign={bulkAssign}
+      onAlign={alignSelection}
+      onDistribute={distributeSelection}
+      onGroup={groupSelection}
+      onUngroup={ungroupSelection}
+      onZOrder={zOrder}
+      snapToGrid={snapToGrid}
+      fitSignal={presenting ? 1 : 0}
+      onSelectionChange={handleCanvasSelection}
+      onRenameElement={renameElement}
+      onDuplicateNodes={duplicateNodes}
+      onPaste={pasteClipboard}
+      hasClipboard={clipboardCount > 0}
+    />
+  ) : null;
+
+  // Presentation mode: canvas only, no chrome. Esc or the corner button exits.
+  if (presenting && canvasElement) {
+    return (
+      <LanguageContext.Provider value={language}>
+        <div className="app presenting">
+          {canvasElement}
+          <button className="present-exit" onClick={() => setPresenting(false)}>
+            ✕ Exit (Esc)
+          </button>
+        </div>
+      </LanguageContext.Provider>
+    );
+  }
+
   if (route === 'home') {
     return (
       <LanguageContext.Provider value={language}>
@@ -928,6 +1109,7 @@ export default function App() {
             </nav>
             <div className="topbar-right">
               <button onClick={() => setShowSavedViews(true)} title="Saved views">☆ Views</button>
+              {tab === 'editor' && <button onClick={() => setPresenting(true)} title="Presentation mode">▶ Present</button>}
               <button onClick={undo} disabled={past.length === 0} title={t('undo')}>↶</button>
               <button onClick={redo} disabled={future.length === 0} title={t('redo')}>↷</button>
               <span className="model-title">{model ? primaryText(model.name) : 'No workspace'}</span>
@@ -1013,31 +1195,7 @@ export default function App() {
                       ))}
                     </div>
                   </div>
-                  <div className="editor-area">
-                    <Canvas
-                      view={scopedView}
-                      elements={scopedModel?.elements ?? []}
-                      relationships={scopedModel?.relationships ?? []}
-                      domains={model.domains ?? []}
-                      visibleLayers={visibleLayers}
-                      environmentFilter={environmentFilter}
-                      onSelectElement={setSelectedElementId}
-                      onNodeMove={moveNode}
-                      onAddElement={addElement}
-                      onConnect={requestConnection}
-                      onNodesDelete={deleteNodes}
-                      onEdgesDelete={deleteEdges}
-                      onBulkAssign={bulkAssign}
-                      onAlign={alignSelection}
-                      onDistribute={distributeSelection}
-                      snapToGrid={snapToGrid}
-                      onSelectionChange={handleCanvasSelection}
-                      onRenameElement={renameElement}
-                      onDuplicateNodes={duplicateNodes}
-                      onPaste={pasteClipboard}
-                      hasClipboard={clipboardCount > 0}
-                    />
-                  </div>
+                  <div className="editor-area">{canvasElement}</div>
                   {magic && (
                     <div className="magic-menu">
                       <strong>Choose relationship</strong>
