@@ -274,9 +274,9 @@ matter more than another connector.
 | Phase | Status | Shipped | Still open |
 |---|---|---|---|
 | **1. Workspaces & domains** | ✅ Done | Workspace home, create/duplicate/archive/delete, purpose/status/owner/tags, templates, deep links, domain registry, element domain/environment, domain filters, domain map, ADR/requirement/principle artefacts, workspace settings, portfolio dashboard, **stakeholder viewpoints with L1–L4 granulation, dependency depth, expandable detail, and configurable attributes** | — |
-| **2. Project & infrastructure** | 🟡 Mostly done | Terraform/Kubernetes/docker-compose import, environment overlays, deployment view, interface catalogue, `openarch check`, infrastructure templates | C4/Structurizr bridge, cloud icon packs |
-| **3. Archi/ArchiMate depth** | 🟡 Partial | `.archimate` import/export (ZIP), AOEF conformance, viewpoints library | ArchiMate 4.0 registry, Git sync UI, merge review UI, scripting sandbox |
-| **4. TOGAF & enterprise** | 🟡 Mostly done | TOGAF Architecture Vision template, capability tree, portfolio fields + TIME, baseline approvals, Markdown/HTML reports, OIDC/RS256 via JWKS, standards packs, SIEM webhook | Value-stream view, DOCX/PPTX/Confluence publishing, Jira/Confluence connectors, CMDB, SCIM |
+| **2. Project & infrastructure** | ✅ Done | Terraform/Kubernetes/docker-compose import, environment overlays, deployment view, interface catalogue, `openarch check`, infrastructure templates, **C4/Structurizr bridge (import/export/CLI)**, **cloud icon packs (view styling)** | — |
+| **3. Archi/ArchiMate depth** | 🟡 Partial | `.archimate` import/export (ZIP), AOEF conformance, viewpoints library, **versioned metamodel registry (3.2 default, per ADR-0003)**, **Git-native workspaces UI** | Full 4.0 metamodel deltas, merge review UI, scripting sandbox |
+| **4. TOGAF & enterprise** | 🟡 Mostly done | TOGAF Architecture Vision template, capability tree, portfolio fields + TIME, baseline approvals, Markdown/HTML reports, **DOCX/PPTX packs**, **value-stream view**, OIDC/RS256 via JWKS, standards packs, SIEM webhook | Confluence publish, Jira/Confluence connectors, CMDB, SCIM |
 | **5. Scale & ecosystem** | 🟡 Partial | Cross-workspace portfolio, templates gallery | Marketplace, SCIM, multi-tenant hierarchy |
 | **6. Trust & daily use** | 🟡 In progress | Autosave + saved/unsaved badge, per-tab error boundary, Playwright E2E (6 specs, CI), save-time validation warning, dark mode, bundle split (797→190 KB initial), 2k-element perf smoke, version history + restore, 409 conflict dialog, schema migration, backup-all, i18n for editor/palette UI, a11y quick pass | Full i18n sweep of remaining screens, deeper accessibility audit |
 | **7. Workflow stickiness** | 🟡 In progress | Bulk edit, command palette + search (⌘K), dark mode, IaC drift detection + apply, Git-native workspaces (GitHub store), onboarding dialog | Full cross-workspace global search, sample gallery tour |
@@ -479,11 +479,11 @@ proving it, and the diagram survives a round-trip looking the way the user left 
 | 13 | Playwright E2E: create → add → connect → bulk-assign → delete → reload → export AOEF | 6/7A | ✅ `e2e/smoke.spec.ts`, runs in CI |
 | 14 | Drawing polish (bendpoints, labels, containers, z-order, palette drag, presentation ✅) | 7A | ✅ |
 | 15 | Containers, z-order, context menu, palette drag-and-drop, presentation mode | 7A | Later |
-| 16 | C4 / Structurizr bridge | 2 | Next |
-| 17 | ArchiMate 4.0 registry | 3 | Next |
-| 18 | Git sync UI (clone/pull/commit/push) | 3 | Next |
-| 19 | Value-stream view | 4 | Next |
-| 20 | DOCX/PPTX and Confluence publishing | 4 | Later |
+| 16 | C4 / Structurizr bridge (packages/c4, CLI + web import/export) | 2 | ✅ |
+| 17 | ArchiMate 4.0 registry mechanics (versioned registry; 4.0 deltas pending the spec) | 3 | 🟡 registry ✅, 4.0 deltas later |
+| 18 | Git sync UI (GitHub-backed store, commit on save) | 3 | ✅ |
+| 19 | Value-stream view | 4 | ✅ |
+| 20 | DOCX report + PPTX deck (Confluence publish still open) | 4 | 🟡 DOCX/PPTX ✅ |
 | 21 | Jira / Confluence / ServiceNow connectors | 4–5 | Later |
 
 ---
