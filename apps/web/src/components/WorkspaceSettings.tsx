@@ -10,6 +10,7 @@ import {
   type WorkspaceStatus,
 } from '@openarch/core';
 import { useState } from 'react';
+import { useTranslation } from '../i18n';
 import type { ConnectorConfig } from '@openarch/connectors';
 
 interface WorkspaceSettingsProps {
@@ -39,6 +40,7 @@ export default function WorkspaceSettings({
   onArchive,
   onDelete,
 }: WorkspaceSettingsProps) {
+  const t = useTranslation();
   const [name, setName] = useState(primaryText(model.name));
   const [description, setDescription] = useState(primaryText(model.documentation));
   const [owner, setOwner] = useState(model.owner ?? '');
@@ -84,7 +86,7 @@ export default function WorkspaceSettings({
           <button className="link-button" onClick={onBack}>
             ← All workspaces
           </button>
-          <h2>Workspace settings</h2>
+          <h2>{t('workspaceSettings')}</h2>
           <p>Metadata, domains, and lifecycle for this workspace.</p>
         </div>
         <div className="stat-inline">
@@ -96,7 +98,7 @@ export default function WorkspaceSettings({
 
       <div className="dashboard-grid">
         <section className="panel-card">
-          <h3>Identity</h3>
+          <h3>{t('identity')}</h3>
           <label className="field">
             Name
             <input
@@ -156,7 +158,7 @@ export default function WorkspaceSettings({
                 value={owner}
                 onChange={(event) => setOwner(event.target.value)}
                 onBlur={() => onUpdate({ owner: owner.trim() })}
-                placeholder="Accountable person"
+                placeholder={t('ownerLabel')}
               />
             </label>
             <label className="field">
@@ -181,7 +183,7 @@ export default function WorkspaceSettings({
 
         <section className="panel-card">
           <div className="section-heading">
-            <h3>Domains</h3>
+            <h3>{t('domainsHeading')}</h3>
             <button className="small-button" onClick={addDomain}>
               + Add domain
             </button>
@@ -216,7 +218,7 @@ export default function WorkspaceSettings({
                 </button>
               </li>
             ))}
-            {domains.length === 0 && <li className="empty">No domains yet.</li>}
+            {domains.length === 0 && <li className="empty">{t('noDomains')}</li>}
           </ul>
           {unassigned.length > 0 && (
             <label className="field">
@@ -236,7 +238,7 @@ export default function WorkspaceSettings({
         </section>
 
         <section className="panel-card wide">
-          <h3>Connectors</h3>
+          <h3>{t('connectors')}</h3>
           <p className="muted">
             Link elements to Jira issues, Confluence pages, and ServiceNow CIs; publish views to
             Confluence. The token is kept in this browser session only.
@@ -285,9 +287,9 @@ export default function WorkspaceSettings({
         </section>
 
         <section className="panel-card wide">
-          <h3>Lifecycle</h3>
+          <h3>{t('lifecycle')}</h3>
           <div className="settings-actions">
-            <button onClick={onDuplicate}>Duplicate workspace</button>
+            <button onClick={onDuplicate}>{t('duplicateWorkspace')}</button>
             <button onClick={onArchive} disabled={model.status === 'archived'}>
               Archive workspace
             </button>

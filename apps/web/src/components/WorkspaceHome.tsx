@@ -5,6 +5,7 @@ import {
   type WorkspaceStatus,
 } from '@openarch/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from '../i18n';
 
 export interface CreateWorkspaceInput {
   name: string;
@@ -78,6 +79,7 @@ export default function WorkspaceHome({
   createSignal,
   importSignal,
 }: WorkspaceHomeProps) {
+  const t = useTranslation();
   const backupInput = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | WorkspaceStatus>('all');
@@ -162,8 +164,8 @@ export default function WorkspaceHome({
               event.target.value = '';
             }}
           />
-          <button onClick={() => fileInput.current?.click()}>Import model</button>
-          <button onClick={onOpenPortfolio}>Portfolio</button>
+          <button onClick={() => fileInput.current?.click()}>{t('importModel')}</button>
+          <button onClick={onOpenPortfolio}>{t('portfolio')}</button>
           <button className="primary-button" onClick={() => setCreating(true)}>
             + New workspace
           </button>
@@ -185,12 +187,12 @@ export default function WorkspaceHome({
           <input
             className="search"
             type="search"
-            placeholder="Search workspaces…"
+            placeholder={t('searchWorkspaces')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
           <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}>
-            <option value="all">All statuses</option>
+            <option value="all">{t('allStatuses')}</option>
             {(['draft', 'active', 'approved', 'archived'] as WorkspaceStatus[]).map((value) => (
               <option key={value} value={value}>
                 {STATUS_LABEL[value]}
@@ -198,14 +200,14 @@ export default function WorkspaceHome({
             ))}
           </select>
           <select value={purpose} onChange={(event) => setPurpose(event.target.value as typeof purpose)}>
-            <option value="all">All purposes</option>
+            <option value="all">{t('allPurposes')}</option>
             <option value="as-is">AS-IS</option>
             <option value="to-be">TO-BE</option>
             <option value="migration">Migration</option>
           </select>
           <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}>
-            <option value="recent">Recently updated</option>
-            <option value="name">Name</option>
+            <option value="recent">{t('recentlyUpdated')}</option>
+            <option value="name">{t('sortName')}</option>
           </select>
           <button className="small-button" onClick={onExportAll} title="Download every workspace as one JSON archive">
             Export all
@@ -269,9 +271,9 @@ export default function WorkspaceHome({
                   </span>
                 </footer>
                 <div className="workspace-actions" onClick={(event) => event.stopPropagation()}>
-                  <button onClick={() => onDuplicate(workspace.id)}>Duplicate</button>
+                  <button onClick={() => onDuplicate(workspace.id)}>{t('duplicate')}</button>
                   {workspace.status !== 'archived' && (
-                    <button onClick={() => onArchive(workspace.id)}>Archive</button>
+                    <button onClick={() => onArchive(workspace.id)}>{t('archive')}</button>
                   )}
                   <button className="danger-link" onClick={() => onDelete(workspace.id)}>
                     Delete
@@ -284,10 +286,10 @@ export default function WorkspaceHome({
       </main>
 
       {creating && (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="New workspace">
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('newWorkspace')}>
           <div className="modal">
             <header className="modal-header">
-              <h2>New workspace</h2>
+              <h2>{t('newWorkspace')}</h2>
               <button className="icon-button" onClick={() => setCreating(false)} aria-label="Close">
                 ×
               </button>
@@ -333,7 +335,7 @@ export default function WorkspaceHome({
                     className="form-input full"
                     value={draft.owner}
                     onChange={(event) => setDraft({ ...draft, owner: event.target.value })}
-                    placeholder="Accountable person"
+                    placeholder={t('ownerLabel')}
                   />
                 </label>
               </div>
@@ -361,7 +363,7 @@ export default function WorkspaceHome({
               </label>
             </div>
             <footer className="modal-footer">
-              <button onClick={() => setCreating(false)}>Cancel</button>
+              <button onClick={() => setCreating(false)}>{t('cancel')}</button>
               <button className="primary-button" onClick={submit} disabled={!draft.name.trim()}>
                 Create workspace
               </button>
