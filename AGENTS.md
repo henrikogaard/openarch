@@ -239,9 +239,13 @@ Follow the two-week sprint in `docs/status-2026-11-17.md` §5 and the drawing-de
 to the model, multi-select + bulk assign, autosave, error boundary, Playwright E2E (branch
 `feat/drawing-depth-trust`). Next:
 
-1. **Drawing polish**: edge bendpoints/reconnect, on-canvas labels, containers, z-order, context
-   menu, palette drag-and-drop (copy/paste/duplicate, align/distribute, snap-to-grid ✅; roadmap
-   Phase 7A, `docs/roadmap.md` §12). E2E helpers live in `e2e/helpers.ts`.
+1. **Phase 6 trust remainder**: version-history UI, 409 conflict review, save-time validation,
+   schema migration, backup-all, i18n completion, accessibility pass, 2k-element performance,
+   bundle splitting (`docs/roadmap.md` §9). E2E helpers live in `e2e/helpers.ts`.
+2. **Phase 7 stickiness**: command palette (⌘K), global search, dark mode, onboarding,
+   IaC drift, Git-native workspaces (`docs/roadmap.md` §10).
+(Drawing depth Phase 7A is ✅ done: delete, multi-select, bulk assign, copy/paste, align,
+snap, rename, context menu, bendpoints/reconnect, grouping, z-order, palette drag, presentation.)
 
 **Definition of done for this sprint:** a new user can create a workspace, draw and connect
 elements, delete them, bulk-assign a domain, reload without losing work, and export a valid AOEF

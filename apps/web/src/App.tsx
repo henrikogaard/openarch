@@ -26,6 +26,7 @@ import {
   setEdgeBendpoints,
   setNodeZOrder,
   ungroupNodes,
+  validateModel,
   type ArchiElement,
   type Artefact,
   type Bounds,
@@ -56,8 +57,7 @@ import {
 import { exportArchi, importArchi } from '@openarch/archi';
 import { exportWorkspaceMarkdown } from '@openarch/reporting';
 import { LanguageContext, type Language, useTranslation } from './i18n';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import AiPanel from './components/AiPanel';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Artefacts from './components/Artefacts';
 import Canvas from './components/Canvas';
 import Catalog from './components/Catalog';
@@ -67,7 +67,6 @@ import DeploymentView from './components/DeploymentView';
 import ErrorBoundary from './components/ErrorBoundary';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
-import Enrichment from './components/Enrichment';
 import ImportPreview from './components/ImportPreview';
 import Inspector from './components/Inspector';
 import InterfaceCatalog from './components/InterfaceCatalog';
@@ -80,6 +79,10 @@ import ValidationPanel from './components/ValidationPanel';
 import ViewDesigner from './components/ViewDesigner';
 import WorkspaceHome, { type CreateWorkspaceInput } from './components/WorkspaceHome';
 import WorkspaceSettings from './components/WorkspaceSettings';
+
+// Heavy tabs load on demand (AI, enrichment/IaC) to keep the initial bundle small.
+const AiPanel = lazy(() => import('./components/AiPanel'));
+const Enrichment = lazy(() => import('./components/Enrichment'));
 
 type Route = 'home' | 'workspace' | 'portfolio';
 type Tab = 'editor' | 'catalog' | 'analysis' | 'views' | 'enrichment' | 'artefacts' | 'collaborate' | 'ai' | 'settings';
@@ -157,6 +160,14 @@ export default function App() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [presenting, setPresenting] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    localStorage.getItem('openarch-theme') === 'dark' ? 'dark' : 'light',
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('openarch-theme', theme);
+  }, [theme]);
   const modelRef = useRef<Model | null>(null);
   const clipboardRef = useRef<string[]>([]);
   const [clipboardCount, setClipboardCount] = useState(0);
@@ -458,7 +469,14 @@ export default function App() {
         await refreshWorkspaces();
         setDirty(false);
         setLastSavedAt(new Date().toISOString());
-        if (!options.silent) notify('Workspace saved');
+        if (!options.silent) {
+          const errors = validateModel(current).filter((issue) => issue.severity === 'error').length;
+          notify(
+            errors > 0
+              ? `Workspace saved with ${errors} validation error(s) — see the Validation tab`
+              : 'Workspace saved',
+          );
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (/conflict/i.test(message)) {
@@ -1028,6 +1046,7 @@ export default function App() {
       onZOrder={zOrder}
       snapToGrid={snapToGrid}
       fitSignal={presenting ? 1 : 0}
+      colorMode={theme}
       onSelectionChange={handleCanvasSelection}
       onRenameElement={renameElement}
       onDuplicateNodes={duplicateNodes}
@@ -1082,6 +1101,8 @@ export default function App() {
           workspaceName={model ? primaryText(model.name) : ''}
           mode={mode}
           language={language}
+          theme={theme}
+          onThemeChange={setTheme}
           onLanguageChange={setLanguage}
           onModeChange={setMode}
           onHome={goHome}
@@ -1281,17 +1302,19 @@ export default function App() {
                   }}
                 />
               ) : tab === 'enrichment' ? (
-                <Enrichment
-                  model={model}
-                  onApply={(elements, relationships) => {
-                    commit((current) => ({
-                      ...current,
-                      elements: [...current.elements, ...elements],
-                      relationships: [...current.relationships, ...relationships],
-                    }));
-                    notify(`Added ${elements.length} enriched elements — remember to save`);
-                  }}
-                />
+                <Suspense fallback={<div className="placeholder">Loading…</div>}>
+                  <Enrichment
+                    model={model}
+                    onApply={(elements, relationships) => {
+                      commit((current) => ({
+                        ...current,
+                        elements: [...current.elements, ...elements],
+                        relationships: [...current.relationships, ...relationships],
+                      }));
+                      notify(`Added ${elements.length} enriched elements — remember to save`);
+                    }}
+                  />
+                </Suspense>
               ) : tab === 'artefacts' ? (
                 <Artefacts
                   model={model}
@@ -1299,22 +1322,24 @@ export default function App() {
                   onSelectElement={(id) => { setSelectedElementId(id); setTab('editor'); }}
                 />
               ) : tab === 'ai' ? (
-                <AiPanel
-                  model={model}
-                  onReplaceModel={(next) => {
-                    commit(() => next);
-                    setSelectedElementId(null);
-                    setActiveViewIndex(0);
-                  }}
-                  onAddModel={async (next) => {
-                    const existing = await repository.listModels();
-                    const collision = existing.some((item) => item.id === next.id);
-                    const toSave = collision ? { ...next, id: `model-${crypto.randomUUID()}` } : next;
-                    await repository.saveModel(toSave);
-                    await refreshWorkspaces();
-                    await openWorkspace(toSave.id);
-                  }}
-                />
+                <Suspense fallback={<div className="placeholder">Loading…</div>}>
+                  <AiPanel
+                    model={model}
+                    onReplaceModel={(next) => {
+                      commit(() => next);
+                      setSelectedElementId(null);
+                      setActiveViewIndex(0);
+                    }}
+                    onAddModel={async (next) => {
+                      const existing = await repository.listModels();
+                      const collision = existing.some((item) => item.id === next.id);
+                      const toSave = collision ? { ...next, id: `model-${crypto.randomUUID()}` } : next;
+                      await repository.saveModel(toSave);
+                      await refreshWorkspaces();
+                      await openWorkspace(toSave.id);
+                    }}
+                  />
+                </Suspense>
               ) : tab === 'settings' ? (
                 <WorkspaceSettings
                   model={model}

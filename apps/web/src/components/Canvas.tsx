@@ -273,6 +273,7 @@ interface CanvasProps {
   onZOrder: (position: 'front' | 'back') => void;
   snapToGrid: boolean;
   fitSignal: number;
+  colorMode: 'light' | 'dark';
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void;
   onRenameElement: (elementId: string, name: string) => void;
   onDuplicateNodes: (nodeIds: string[]) => void;
@@ -313,6 +314,7 @@ function CanvasFlow({
   onZOrder,
   snapToGrid,
   fitSignal,
+  colorMode,
   onSelectionChange,
   onRenameElement,
   onDuplicateNodes,
@@ -474,9 +476,10 @@ function CanvasFlow({
           });
         }}
         fitView
+        colorMode={colorMode}
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={20} size={1} color="#d8dee9" />
+        <Background gap={20} size={1} color={colorMode === 'dark' ? '#334155' : '#d8dee9'} />
         <Controls />
         <MiniMap
           pannable

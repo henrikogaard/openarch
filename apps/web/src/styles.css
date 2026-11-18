@@ -11,6 +11,31 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+[data-theme='dark'] {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --border: #334155;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #3b82f6;
+  --accent-soft: #1e3a5f;
+  --danger: #f87171;
+}
+
+[data-theme='dark'] .canvas-hint {
+  background: #1e293bcc;
+}
+
+[data-theme='dark'] .error-boundary {
+  background: #450a0a;
+  border-color: #b91c1c;
+  color: #fecaca;
+}
+
+[data-theme='dark'] .error-boundary-hint {
+  color: #fca5a5;
+}
+
 * {
   box-sizing: border-box;
 }

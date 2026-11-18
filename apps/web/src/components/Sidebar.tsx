@@ -5,6 +5,8 @@ interface SidebarProps {
   workspaceName: string;
   mode: 'local' | 'server';
   language: Language;
+  theme: 'light' | 'dark';
+  onThemeChange: (theme: 'light' | 'dark') => void;
   onLanguageChange: (language: Language) => void;
   onModeChange: (mode: 'local' | 'server') => void;
   onHome: () => void;
@@ -25,6 +27,8 @@ export default function Sidebar({
   workspaceName,
   mode,
   language,
+  theme,
+  onThemeChange,
   onLanguageChange,
   onModeChange,
   onHome,
@@ -101,6 +105,14 @@ export default function Sidebar({
           </button>
           <button className={language === 'nb' ? 'active' : ''} onClick={() => onLanguageChange('nb')}>
             NB
+          </button>
+          <button
+            className={theme === 'dark' ? 'active' : ''}
+            onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label="Toggle dark mode"
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
           </button>
         </div>
       </div>
