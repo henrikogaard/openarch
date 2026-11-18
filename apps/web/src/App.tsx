@@ -177,6 +177,7 @@ export default function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(() => !localStorage.getItem('openarch-onboarded'));
   const [createSignal, setCreateSignal] = useState(0);
   const [importSignal, setImportSignal] = useState(0);
+  const [allModels, setAllModels] = useState<Model[] | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     localStorage.getItem('openarch-theme') === 'dark' ? 'dark' : 'light',
   );
@@ -413,6 +414,8 @@ export default function App() {
   }, [notify]);
 
   const openWorkspace = async (id: string) => {
+    // Flush a pending autosave so switching workspaces never loses edits.
+    if (modelRef.current && dirty) await save({ silent: true });
     const next = await repository.getModel(id);
     if (!next) {
       notify('Workspace not found');
@@ -444,6 +447,7 @@ export default function App() {
   };
 
   const goHome = () => {
+    if (modelRef.current && dirty) void save({ silent: true });
     setRoute('home');
     setModel(null);
     modelRef.current = null;
@@ -585,6 +589,25 @@ export default function App() {
     }, 1500);
     return () => window.clearTimeout(timer);
   }, [dirty, model, readOnly, save]);
+
+  // Global search: load every workspace's model once when the palette first
+  // opens, so ⌘K searches elements across all workspaces.
+  useEffect(() => {
+    if (!paletteOpen || allModels) return;
+    let cancelled = false;
+    (async () => {
+      const list = await repository.listModels();
+      const loaded = await Promise.all(list.map((workspace) => repository.getModel(workspace.id)));
+      if (!cancelled) {
+        setAllModels(loaded.filter((item): item is Model => Boolean(item)));
+      }
+    })().catch(() => {
+      if (!cancelled) setAllModels([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [paletteOpen, allModels, repository]);
 
   const importFile = async (file: File) => {
     try {
@@ -1191,6 +1214,23 @@ export default function App() {
         setTab('editor');
       },
     })),
+    // Cross-workspace search: elements from every other workspace.
+    ...(allModels ?? [])
+      .filter((candidate) => candidate.id !== model?.id)
+      .flatMap((workspace) =>
+        workspace.elements.map((element) => ({
+          id: `ws-${workspace.id}-el-${element.id}`,
+          group: `Search · ${primaryText(workspace.name) || workspace.id}`,
+          label: `${primaryText(element.name) || element.id} — ${element.type}`,
+          keywords: `${element.type} ${element.domain ?? ''} ${element.environment ?? ''}`,
+          run: () => {
+            void openWorkspace(workspace.id).then(() => {
+              setSelectedElementId(element.id);
+              setTab('editor');
+            });
+          },
+        })),
+      ),
   ];
 
   const selectedElement = model?.elements.find((element) => element.id === selectedElementId);
