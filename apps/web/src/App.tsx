@@ -82,6 +82,7 @@ import Portfolio from './components/Portfolio';
 import SavedViews, { type SavedView } from './components/SavedViews';
 import Sidebar from './components/Sidebar';
 import TraceView from './components/TraceView';
+import ValueStreams from './components/ValueStreams';
 import ValidationPanel from './components/ValidationPanel';
 import ViewDesigner from './components/ViewDesigner';
 import WorkspaceHome, { type CreateWorkspaceInput } from './components/WorkspaceHome';
@@ -93,7 +94,7 @@ const Enrichment = lazy(() => import('./components/Enrichment'));
 
 type Route = 'home' | 'workspace' | 'portfolio';
 type Tab = 'editor' | 'catalog' | 'analysis' | 'views' | 'enrichment' | 'artefacts' | 'collaborate' | 'ai' | 'settings';
-type AnalysisTab = 'dashboard' | 'eam' | 'validation' | 'trace' | 'matrices' | 'deployment' | 'interfaces' | 'domains';
+type AnalysisTab = 'dashboard' | 'eam' | 'validation' | 'trace' | 'matrices' | 'deployment' | 'interfaces' | 'domains' | 'streams';
 type Mode = 'local' | 'server' | 'git';
 
 interface MagicConnection {
@@ -1159,7 +1160,7 @@ export default function App() {
 
   const selectedElement = model?.elements.find((element) => element.id === selectedElementId);
   const primaryTabs = PRIMARY_TABS;
-  const analysisTabs: AnalysisTab[] = ['dashboard', 'eam', 'validation', 'trace', 'matrices', 'deployment', 'interfaces', 'domains'];
+  const analysisTabs: AnalysisTab[] = ['dashboard', 'eam', 'validation', 'trace', 'matrices', 'deployment', 'interfaces', 'domains', 'streams'];
 
   const canvasElement = model && scopedView ? (
     <Canvas
@@ -1441,8 +1442,10 @@ export default function App() {
                     <DeploymentView model={model} environment={environmentFilter} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
                   ) : analysisTab === 'interfaces' ? (
                     <InterfaceCatalog model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
-                  ) : (
+                  ) : analysisTab === 'domains' ? (
                     <DomainMap model={model} onSelectDomain={(id) => { setDomainFilter(id); setTab('editor'); }} />
+                  ) : (
+                    <ValueStreams model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
                   )}
                 </>
               ) : tab === 'views' ? (

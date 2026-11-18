@@ -147,6 +147,73 @@ export function orphanElements(model: Model): ArchiElement[] {
   return model.elements.filter((element) => !connected.has(element.id));
 }
 
+export interface ValueStreamStage {
+  element: ArchiElement;
+  capabilities: ArchiElement[];
+}
+
+export interface ValueStreamView {
+  stream: ArchiElement;
+  stages: ValueStreamStage[];
+}
+
+/**
+ * Derive value streams: each ValueStream element is a stage chain ordered by
+ * Flow relationships; capabilities supporting a stage are linked to it via
+ * Realization.
+ */
+export function valueStreamViews(model: Model): ValueStreamView[] {
+  const streams = model.elements.filter((element) => element.type === 'ValueStream');
+  return streams.map((stream) => {
+    // All stages in this stream: the stream element itself plus stages chained
+    // to it by Flow (transitively).
+    const stageIds = new Set<string>([stream.id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const rel of model.relationships) {
+        if (rel.type !== 'Flow') continue;
+        if (stageIds.has(rel.source) && !stageIds.has(rel.target)) {
+          stageIds.add(rel.target);
+          grew = true;
+        } else if (stageIds.has(rel.target) && !stageIds.has(rel.source)) {
+          stageIds.add(rel.source);
+          grew = true;
+        }
+      }
+    }
+    // Order stages by following Flow direction from the stream element.
+    const ordered: string[] = [stream.id];
+    const seen = new Set<string>([stream.id]);
+    let current = stream.id;
+    while (true) {
+      const next = model.relationships.find(
+        (rel) => rel.type === 'Flow' && rel.source === current && stageIds.has(rel.target) && !seen.has(rel.target),
+      );
+      if (!next) break;
+      ordered.push(next.target);
+      seen.add(next.target);
+      current = next.target;
+    }
+    // Any remaining stages (not reachable by forward flow) appended in id order.
+    for (const id of [...stageIds].sort()) if (!seen.has(id)) ordered.push(id);
+
+    const capabilitiesOf = (stageId: string) =>
+      model.relationships
+        .filter((rel) => rel.type === 'Realization' && rel.target === stageId)
+        .map((rel) => model.elements.find((element) => element.id === rel.source))
+        .filter((element): element is ArchiElement => Boolean(element) && element!.type === 'Capability');
+
+    return {
+      stream,
+      stages: ordered.map((id) => {
+        const element = model.elements.find((candidate) => candidate.id === id)!;
+        return { element, capabilities: capabilitiesOf(id) };
+      }),
+    };
+  });
+}
+
 export function typeCounts(model: Model): Array<{ type: string; label: string; count: number; color?: string }> {
   const counts = new Map<string, number>();
   for (const element of model.elements) counts.set(element.type, (counts.get(element.type) ?? 0) + 1);

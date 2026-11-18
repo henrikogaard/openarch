@@ -17,6 +17,7 @@ import {
   traceElements,
   validateModel,
   validateWithPlugins,
+  valueStreamViews,
   VIEWPOINTS,
 } from './index';
 
@@ -129,6 +130,42 @@ describe('analysis', () => {
 
   it('searches elements', () => {
     expect(searchModel(model, 'claim').length).toBeGreaterThan(0);
+  });
+
+  it('derives value streams with ordered stages and supporting capabilities', () => {
+    const withStreams = createSampleModel();
+    const el = (id: string, type: string, name: string) => ({
+      id,
+      type,
+      name: [{ lang: 'en', value: name }],
+      documentation: [],
+      properties: [],
+    });
+    const rel = (id: string, type: string, source: string, target: string) => ({
+      id,
+      type,
+      source,
+      target,
+      name: [],
+      documentation: [],
+      properties: [],
+    });
+    withStreams.elements.push(
+      el('vs', 'ValueStream', 'Order to cash'),
+      el('stage-1', 'ValueStream', 'Order received'),
+      el('stage-2', 'ValueStream', 'Order fulfilled'),
+      el('cap-1', 'Capability', 'Order management'),
+    );
+    withStreams.relationships.push(
+      rel('f1', 'Flow', 'vs', 'stage-1'),
+      rel('f2', 'Flow', 'stage-1', 'stage-2'),
+      rel('r-cap', 'Realization', 'cap-1', 'stage-1'),
+    );
+    const streams = valueStreamViews(withStreams);
+    expect(streams.length).toBe(3); // vs + two stages are all ValueStream elements
+    const main = streams.find((stream) => stream.stream.id === 'vs')!;
+    expect(main.stages.map((stage) => stage.element.id)).toEqual(['vs', 'stage-1', 'stage-2']);
+    expect(main.stages[1].capabilities.map((capability) => capability.id)).toEqual(['cap-1']);
   });
 });
 

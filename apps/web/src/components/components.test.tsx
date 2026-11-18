@@ -9,6 +9,7 @@ import ErrorBoundary from './ErrorBoundary';
 import Inspector from './Inspector';
 import MatrixView from './MatrixView';
 import ValidationPanel from './ValidationPanel';
+import ValueStreams from './ValueStreams';
 import ViewDesigner from './ViewDesigner';
 import WorkspaceHome from './WorkspaceHome';
 
@@ -112,6 +113,23 @@ describe('analysis components render the model', () => {
     expect(screen.getByText('Granulation')).toBeTruthy();
     expect(screen.getByText('Preview')).toBeTruthy();
     expect(screen.getByText('Displayed attributes')).toBeTruthy();
+  });
+
+  it('renders value streams with stages and capabilities', () => {
+    const withStreams = createSampleModel();
+    withStreams.elements.push(
+      { id: 'vs', type: 'ValueStream', name: [{ lang: 'en', value: 'Order to cash' }], documentation: [], properties: [] },
+      { id: 'stage-1', type: 'ValueStream', name: [{ lang: 'en', value: 'Order received' }], documentation: [], properties: [] },
+      { id: 'cap-1', type: 'Capability', name: [{ lang: 'en', value: 'Order management' }], documentation: [], properties: [] },
+    );
+    withStreams.relationships.push(
+      { id: 'f1', type: 'Flow', source: 'vs', target: 'stage-1', name: [], documentation: [], properties: [] },
+      { id: 'r-cap', type: 'Realization', source: 'cap-1', target: 'stage-1', name: [], documentation: [], properties: [] },
+    );
+    render(<ValueStreams model={withStreams} onSelect={() => {}} />);
+    expect(screen.getAllByText('Order to cash').length).toBeGreaterThan(0);
+    expect(screen.getByText('Order received')).toBeTruthy();
+    expect(screen.getByText('Order management')).toBeTruthy();
   });
 
   it('shows element details in the inspector', () => {
