@@ -28,6 +28,7 @@ Commands:
   diff <a> <b>               Compare two model files
   check <file> [rules.json]  Run architecture rules; exit 1 on errors
   report <file> <output.md>  Write a Markdown workspace report
+  script <model> <file.js> [out]  Run a sandboxed script against a model (must return the model)
   doctor                     Print environment and capability information
   --help                     Show this help
 
@@ -217,6 +218,20 @@ async function convert(input: string, output: string): Promise<number> {
   return 0;
 }
 
+async function script(modelPath: string, scriptPath: string, outputPath?: string): Promise<number> {
+  const model = await readModelFile(modelPath);
+  const code = await readFile(scriptPath, 'utf8');
+  const { runModelScript } = await import('@openarch/core');
+  const result = runModelScript(model, code);
+  for (const line of result.logs) console.log(`[script] ${line}`);
+  const text = serializeModel(result.model, 'json');
+  const target = outputPath ?? modelPath;
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, text, 'utf8');
+  console.log(`Script applied: ${result.model.elements.length} elements, ${result.issues.length} non-error finding(s) -> ${target}`);
+  return 0;
+}
+
 async function check(filePath: string, rulesPath?: string): Promise<number> {
   const model = await readModelFile(filePath);
   const rules = rulesPath ? parseRules(await readFile(rulesPath, 'utf8')) : undefined;
@@ -348,6 +363,9 @@ async function main(): Promise<number> {
     case 'report':
       requireArgs(args, command, 2);
       return report(args[0], args[1]);
+    case 'script':
+      if (args.length < 2) throw new Error('Command "script" expects at least 2 arguments (model, script.js).');
+      return script(args[0], args[1], args[2]);
     case 'doctor':
       requireArgs(args, command, 0);
       return doctor();

@@ -9,3 +9,4 @@ export * from './templates';
 export * from './analysis';
 export * from './diff';
 export * from './plugins';
+export * from './scripting';
