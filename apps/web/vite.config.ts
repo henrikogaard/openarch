@@ -7,7 +7,16 @@ export default defineConfig({
   server: { port: 5173 },
   build: {
     chunkSizeWarningLimit: 750,
-    // Lazy tabs (AI, enrichment/IaC) split into their own async chunks via
-    // React.lazy; everything else stays in the entry + vendor chunk.
+    rollupOptions: {
+      output: {
+        // One vendor chunk (splitting further creates circular-chunk warnings
+        // via zustand/react-is); lazy tabs (AI, enrichment/IaC) still split
+        // into their own async chunks via React.lazy.
+        manualChunks(id) {
+          if (id.includes('node_modules')) return 'vendor';
+          return undefined;
+        },
+      },
+    },
   },
 });
