@@ -275,13 +275,13 @@ matter more than another connector.
 |---|---|---|---|
 | **1. Workspaces & domains** | ✅ Done | Workspace home, create/duplicate/archive/delete, purpose/status/owner/tags, templates, deep links, domain registry, element domain/environment, domain filters, domain map, ADR/requirement/principle artefacts, workspace settings, portfolio dashboard, **stakeholder viewpoints with L1–L4 granulation, dependency depth, expandable detail, and configurable attributes** | — |
 | **2. Project & infrastructure** | ✅ Done | Terraform/Kubernetes/docker-compose import, environment overlays, deployment view, interface catalogue, `openarch check`, infrastructure templates, **C4/Structurizr bridge (import/export/CLI)**, **cloud icon packs (view styling)** | — |
-| **3. Archi/ArchiMate depth** | 🟡 Partial | `.archimate` import/export (ZIP), AOEF conformance, viewpoints library, **versioned metamodel registry (3.2 default, per ADR-0003)**, **Git-native workspaces UI** | Full 4.0 metamodel deltas, merge review UI, scripting sandbox |
-| **4. TOGAF & enterprise** | 🟡 Mostly done | TOGAF Architecture Vision template, capability tree, portfolio fields + TIME, baseline approvals, Markdown/HTML reports, **DOCX/PPTX packs**, **value-stream view**, OIDC/RS256 via JWKS, standards packs, SIEM webhook | Confluence publish, Jira/Confluence connectors, CMDB, SCIM |
-| **5. Scale & ecosystem** | 🟡 Partial | Cross-workspace portfolio, templates gallery | Marketplace, SCIM, multi-tenant hierarchy |
+| **3. Archi/ArchiMate depth** | ✅ Done for now | `.archimate` I/O, AOEF conformance, viewpoints, versioned metamodel registry (3.2 default), Git-native workspaces UI, merge-into-current on import, sandboxed scripting + CLI `script` | Full 4.0 metamodel deltas (awaiting the spec) |
+| **4. TOGAF & enterprise** | ✅ Mostly done | TOGAF template, capability tree, portfolio + TIME, baseline approvals, Markdown/HTML/DOCX/PPTX reports, value-stream view, OIDC/RS256 (JWKS e2e-tested), standards packs, SIEM webhook, Jira/Confluence/ServiceNow links + Confluence publish | Scheduled Confluence publish |
+| **5. Scale & ecosystem** | 🟡 Done except marketplace | Cross-workspace portfolio, templates gallery, SCIM 2.0 Users API, multi-tenant org scoping | Marketplace — deliberately not started (adoption gate, AGENTS.md §13) |
 | **6. Trust & daily use** | 🟡 In progress | Autosave + saved/unsaved badge, per-tab error boundary, Playwright E2E (6 specs, CI), save-time validation warning, dark mode, bundle split (797→190 KB initial), 2k-element perf smoke, version history + restore, 409 conflict dialog, schema migration, backup-all, i18n for editor/palette UI, a11y quick pass | Full i18n sweep of remaining screens, deeper accessibility audit |
 | **7. Workflow stickiness** | 🟡 In progress | Bulk edit, command palette + search (⌘K), dark mode, IaC drift detection + apply, Git-native workspaces (GitHub store), onboarding dialog | Full cross-workspace global search, sample gallery tour |
 | **7A. Drawing depth** | ✅ Done (anchored comments remain) | Canvas delete synced to the model, multi-select + bulk assign, copy/paste/duplicate, align/distribute, snap-to-grid, on-canvas rename, context menu + shortcuts, edge bendpoints/reconnect, grouping, z-order, palette drag-and-drop, presentation mode — 5 E2E specs green | Comments anchored to elements |
-| **8. Enterprise & ecosystem** | ⏳ Planned | — | OIDC end-to-end, governance UI, reporting, connectors, SCIM, value streams, C4, ArchiMate 4.0 |
+| **8. Enterprise & ecosystem** | 🟡 In progress | OIDC RS256 e2e-tested (local JWKS), governance UI (approvals, baseline, waivers), connectors, SCIM, org scoping, C4 bridge | Group→role mapping UI, invite/remove members UI, scheduled reporting |
 
 The remaining items in Phases 2–5 are integration-heavy (external systems) or require a larger
 design (ArchiMate 4.0 registry, Git sync UX). Phases 6–8 are specified below.
@@ -483,8 +483,11 @@ proving it, and the diagram survives a round-trip looking the way the user left 
 | 17 | ArchiMate 4.0 registry mechanics (versioned registry; 4.0 deltas pending the spec) | 3 | 🟡 registry ✅, 4.0 deltas later |
 | 18 | Git sync UI (GitHub-backed store, commit on save) | 3 | ✅ |
 | 19 | Value-stream view | 4 | ✅ |
-| 20 | DOCX report + PPTX deck (Confluence publish still open) | 4 | 🟡 DOCX/PPTX ✅ |
-| 21 | Jira / Confluence / ServiceNow connectors | 4–5 | Later |
+| 20 | DOCX/PPTX packs + Confluence publish button | 4 | ✅ |
+| 21 | Jira / Confluence / ServiceNow connectors (links + publish + read-only CMDB) | 4–5 | ✅ |
+| 22 | SCIM 2.0 Users API | 5 | ✅ |
+| 23 | Multi-tenant org scoping | 5 | ✅ |
+| 24 | Marketplace | 5 | ⛔ not started (adoption gate) |
 
 ---
 
