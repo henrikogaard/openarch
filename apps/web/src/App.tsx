@@ -59,7 +59,7 @@ import {
 } from '@openarch/exporters';
 import { exportArchi, importArchi } from '@openarch/archi';
 import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
-import { exportWorkspaceMarkdown } from '@openarch/reporting';
+import { exportViewsPptx, exportWorkspaceDocx, exportWorkspaceMarkdown } from '@openarch/reporting';
 import { LanguageContext, type Language, useTranslation } from './i18n';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Artefacts from './components/Artefacts';
@@ -743,6 +743,32 @@ export default function App() {
     notify('Exported workspace report');
   };
 
+  const exportDocx = async () => {
+    if (!model) return;
+    const bytes = await exportWorkspaceDocx(model);
+    downloadFile(
+      `${slug(primaryText(model.name))}-report.docx`,
+      new Blob([bytes as BlobPart], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      }),
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    notify('Exported DOCX report');
+  };
+
+  const exportPptx = async () => {
+    if (!model) return;
+    const bytes = await exportViewsPptx(model);
+    downloadFile(
+      `${slug(primaryText(model.name))}-views.pptx`,
+      new Blob([bytes as BlobPart], {
+        type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      }),
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    );
+    notify('Exported PPTX deck');
+  };
+
   const share = async () => {
     if (!model || !currentView) return;
     try {
@@ -1291,6 +1317,8 @@ export default function App() {
           onExportMermaid={exportMermaidFile}
           onExportArchi={exportArchiFile}
           onExportC4={exportC4File}
+          onExportDocx={() => void exportDocx()}
+          onExportPptx={() => void exportPptx()}
           onExportReport={exportReport}
           onShare={share}
           onSave={() => void save()}

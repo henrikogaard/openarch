@@ -19,6 +19,8 @@ interface SidebarProps {
   onExportMermaid: () => void;
   onExportArchi?: () => void;
   onExportC4?: () => void;
+  onExportDocx?: () => void;
+  onExportPptx?: () => void;
   onExportReport?: () => void;
   onShare: () => void;
   onSave: () => void;
@@ -42,6 +44,8 @@ export default function Sidebar({
   onExportMermaid,
   onExportArchi,
   onExportC4,
+  onExportDocx,
+  onExportPptx,
   onExportReport,
   onShare,
   onSave,
@@ -97,6 +101,8 @@ export default function Sidebar({
         <button onClick={onExportCsv}>{t('exportCsv')}</button>
         <button onClick={onExportMermaid}>{t('exportMermaid')}</button>
         {onExportReport && <button onClick={onExportReport}>Export report (.md)</button>}
+        {onExportDocx && <button onClick={onExportDocx}>Export DOCX report</button>}
+        {onExportPptx && <button onClick={onExportPptx}>Export PPTX deck</button>}
         <button onClick={onShare}>{t('share')}</button>
         <button onClick={onExportJson}>{t('exportJson')}</button>
       </div>
