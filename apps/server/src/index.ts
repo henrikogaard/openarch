@@ -32,7 +32,7 @@ import {
 } from './auth';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
-import Fastify from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,6 +64,52 @@ const webDist = resolve(repoRoot, 'apps/web/dist');
 const workspaces = new Map<string, Workspace>();
 
 const auditWebhook = process.env.OPENARCH_AUDIT_WEBHOOK;
+
+// ── SCIM 2.0 user provisioning (minimal Users resource) ─────────────────────
+
+interface ScimUser {
+  id: string;
+  userName: string;
+  active: boolean;
+  name?: { givenName?: string; familyName?: string };
+  emails?: Array<{ value: string; primary?: boolean }>;
+  meta: { created: string; lastModified: string };
+}
+
+const scimToken = process.env.OPENARCH_SCIM_TOKEN;
+const scimFile = dataFile.replace(/\.json$/, '') + '.users.json';
+const scimUsers = new Map<string, ScimUser>();
+
+function loadScimUsers(): void {
+  if (!existsSync(scimFile)) return;
+  const stored = JSON.parse(readFileSync(scimFile, 'utf-8')) as ScimUser[];
+  for (const user of stored) scimUsers.set(user.id, user);
+}
+
+function persistScimUsers(): void {
+  writeFileSync(scimFile, JSON.stringify([...scimUsers.values()], null, 2));
+}
+
+loadScimUsers();
+
+function requireScim(request: FastifyRequest, reply: FastifyReply): boolean {
+  const header = request.headers.authorization ?? '';
+  if (!scimToken || header !== `Bearer ${scimToken}`) {
+    void reply.code(401).header('www-authenticate', 'Bearer').send({ error: 'SCIM token required' });
+    return false;
+  }
+  return true;
+}
+
+function scimListResponse(users: ScimUser[]) {
+  return {
+    schemas: ['urn:ietf:params:scim:api:messages:2.0:ListResponse'],
+    totalResults: users.length,
+    itemsPerPage: users.length,
+    startIndex: 1,
+    Resources: users,
+  };
+}
 
 function audit(workspace: Workspace, actor: string, action: AuditEvent['action'], summary: string, entityId?: string): void {
   const event: AuditEvent = {
@@ -232,6 +278,55 @@ app.get('/api/me', async (request, reply) => {
   }
   return { ...actor, roles };
 });
+
+app.get('/scim/v2/Users', async (request, reply) => {
+  if (!requireScim(request, reply)) return;
+  const filter = (request.query as { filter?: string }).filter ?? '';
+  let users = [...scimUsers.values()];
+  const match = /userName eq "([^"]+)"/.exec(filter);
+  if (match) users = users.filter((user) => user.userName === match[1]);
+  return scimListResponse(users);
+});
+
+app.post('/scim/v2/Users', async (request, reply) => {
+  if (!requireScim(request, reply)) return;
+  const body = (request.body ?? {}) as Partial<ScimUser> & { userName?: string };
+  if (!body.userName) return reply.code(400).send({ error: 'userName is required' });
+  if ([...scimUsers.values()].some((user) => user.userName === body.userName)) {
+    return reply.code(409).send({ error: 'User already exists' });
+  }
+  const now = new Date().toISOString();
+  const user: ScimUser = {
+    id: `urn:uuid:${crypto.randomUUID()}`,
+    userName: body.userName,
+    active: body.active ?? true,
+    name: body.name,
+    emails: body.emails,
+    meta: { created: now, lastModified: now },
+  };
+  scimUsers.set(user.id, user);
+  persistScimUsers();
+  return reply.code(201).send({ schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'], ...user });
+});
+
+app.get('/scim/v2/Users/:id', async (request, reply) => {
+  if (!requireScim(request, reply)) return;
+  const user = scimUsers.get((request.params as { id: string }).id);
+  if (!user) return reply.code(404).send({ error: 'User not found' });
+  return { schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'], ...user };
+});
+
+app.delete('/scim/v2/Users/:id', async (request, reply) => {
+  if (!requireScim(request, reply)) return;
+  const user = scimUsers.get((request.params as { id: string }).id);
+  if (!user) return reply.code(404).send({ error: 'User not found' });
+  // SCIM delete = deactivate, keeping the record for audit.
+  user.active = false;
+  user.meta.lastModified = new Date().toISOString();
+  persistScimUsers();
+  return reply.code(204).send();
+});
+
 
 app.get('/api/models', async (request, reply) => {
   const actor = requireActor(request, reply);

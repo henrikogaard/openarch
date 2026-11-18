@@ -46,6 +46,7 @@ beforeAll(async () => {
       PORT: String(port),
       OPENARCH_DATA: join(dataDirectory, 'models.json'),
       OPENARCH_REQUIRE_AUTH: 'true',
+      OPENARCH_SCIM_TOKEN: 'scim-secret',
       OPENARCH_ADMIN: 'admin',
       OPENARCH_TOKENS: JSON.stringify({
         'admin-token': { subject: 'admin', displayName: 'Admin' },
@@ -318,5 +319,45 @@ describe('governance: waivers and approvals', () => {
     expect(removed.status).toBe(204);
     const after = await json<Array<{ id: string }>>('/api/models/sample-model/waivers', { headers: admin });
     expect(after.body.some((w) => w.id === waiver.body.id)).toBe(false);
+  });
+});
+
+describe('SCIM user provisioning', () => {
+  const scim = { Authorization: 'Bearer scim-secret' };
+
+  it('rejects without the SCIM token, then CRUDs users', async () => {
+    const denied = await json('/scim/v2/Users', { headers: admin });
+    expect(denied.status).toBe(401);
+
+    const created = await json<{ id: string; userName: string }>('/scim/v2/Users', {
+      method: 'POST',
+      headers: { ...scim, 'content-type': 'application/json' },
+      body: JSON.stringify({ userName: 'scim-user@example.com', name: { givenName: 'Scim', familyName: 'User' } }),
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.id).toMatch(/^urn:uuid:/);
+
+    const dup = await json('/scim/v2/Users', {
+      method: 'POST',
+      headers: { ...scim, 'content-type': 'application/json' },
+      body: JSON.stringify({ userName: 'scim-user@example.com' }),
+    });
+    expect(dup.status).toBe(409);
+
+    const list = await json<{ totalResults: number; Resources: Array<{ userName: string; active: boolean }> }>(
+      '/scim/v2/Users',
+      { headers: scim },
+    );
+    expect(list.body.totalResults).toBeGreaterThanOrEqual(1);
+    expect(list.body.Resources.some((u) => u.userName === 'scim-user@example.com')).toBe(true);
+
+    const got = await json<{ userName: string }>(`/scim/v2/Users/${encodeURIComponent(created.body.id)}`, { headers: scim });
+    expect(got.status).toBe(200);
+    expect(got.body.userName).toBe('scim-user@example.com');
+
+    const removed = await json(`/scim/v2/Users/${encodeURIComponent(created.body.id)}`, { method: 'DELETE', headers: scim });
+    expect(removed.status).toBe(204);
+    const after = await json<{ active: boolean }>(`/scim/v2/Users/${encodeURIComponent(created.body.id)}`, { headers: scim });
+    expect(after.body.active).toBe(false);
   });
 });
