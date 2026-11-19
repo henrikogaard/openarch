@@ -2287,3 +2287,45 @@ table.matrix td.filled {
   border-bottom: 1px solid var(--border);
   padding: 6px 0;
 }
+
+.milestone-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.milestone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 3px solid var(--accent);
+  padding: 6px 10px;
+  background: var(--bg);
+  border-radius: 0 6px 6px 0;
+}
+.milestone-workpackage { border-left-color: #2563eb; }
+.milestone-plateau { border-left-color: #7c3aed; }
+.milestone-deliverable { border-left-color: #0891b2; }
+
+.undo-timeline {
+  width: min(420px, 92vw);
+  margin: 10vh auto 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px #00000033;
+}
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.timeline-list li {
+  display: flex;
+}
+.timeline-list li.active::before { content: "▶ "; color: var(--accent); }

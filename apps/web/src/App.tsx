@@ -89,9 +89,12 @@ import OnboardingDialog from './components/OnboardingDialog';
 import Portfolio from './components/Portfolio';
 import SavedViews, { type SavedView } from './components/SavedViews';
 import ShortcutHelp from './components/ShortcutHelp';
+import UndoTimeline from './components/UndoTimeline';
+import type { UndoEntry } from './components/UndoTimeline';
 import Sidebar from './components/Sidebar';
 import TraceView from './components/TraceView';
 import ValueStreams from './components/ValueStreams';
+import { MigrationTimelinePanel, TraceabilityPanel } from './components/AnalysisPanels';
 import ValidationPanel from './components/ValidationPanel';
 import ViewDesigner from './components/ViewDesigner';
 import WorkspaceHome, { type CreateWorkspaceInput } from './components/WorkspaceHome';
@@ -103,7 +106,18 @@ const Enrichment = lazy(() => import('./components/Enrichment'));
 
 type Route = 'home' | 'workspace' | 'portfolio';
 type Tab = 'editor' | 'catalog' | 'analysis' | 'views' | 'enrichment' | 'artefacts' | 'collaborate' | 'ai' | 'settings';
-type AnalysisTab = 'dashboard' | 'eam' | 'validation' | 'trace' | 'matrices' | 'deployment' | 'interfaces' | 'domains' | 'streams';
+type AnalysisTab =
+  | 'dashboard'
+  | 'eam'
+  | 'validation'
+  | 'trace'
+  | 'matrices'
+  | 'deployment'
+  | 'interfaces'
+  | 'domains'
+  | 'streams'
+  | 'traceability'
+  | 'timeline';
 type Mode = 'local' | 'server' | 'git';
 
 interface MagicConnection {
@@ -189,6 +203,8 @@ export default function App() {
   const [iconPack, setIconPack] = useState('archimate');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [undoEntries, setUndoEntries] = useState<UndoEntry[]>([]);
   const [conflict, setConflict] = useState<{ currentVersion?: number; current?: Model } | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(() => !localStorage.getItem('openarch-onboarded'));
   const [createSignal, setCreateSignal] = useState(0);
@@ -273,10 +289,15 @@ export default function App() {
     window.setTimeout(() => setStatus('Ready'), 5000);
   }, []);
 
-  const commit = useCallback((updater: (current: Model) => Model) => {
+  const commit = useCallback((updater: (current: Model) => Model, label?: string) => {
     const current = modelRef.current;
     if (!current) return;
     const next = updater(current);
+    if (label) {
+      setUndoEntries((entries) =>
+        [...entries, { index: entries.length, model: next, summary: label }].slice(-60),
+      );
+    }
     setPast((history) => [...history, current].slice(-60));
     setFuture([]);
     modelRef.current = next;
@@ -1338,7 +1359,7 @@ export default function App() {
 
   const selectedElement = model?.elements.find((element) => element.id === selectedElementId);
   const primaryTabs = PRIMARY_TABS;
-  const analysisTabs: AnalysisTab[] = ['dashboard', 'eam', 'validation', 'trace', 'matrices', 'deployment', 'interfaces', 'domains', 'streams'];
+  const analysisTabs: AnalysisTab[] = ['dashboard', 'eam', 'validation', 'trace', 'matrices', 'deployment', 'interfaces', 'domains', 'streams', 'traceability', 'timeline'];
 
   const canvasElement = model && scopedView ? (
     <Canvas
@@ -1427,6 +1448,16 @@ export default function App() {
           importSignal={importSignal}
         />
         {shortcutHelpOpen && <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />}
+        {historyOpen && (
+          <UndoTimeline
+            entries={undoEntries}
+            currentIndex={-1}
+            onJump={() => {
+              notify('Restored state from history');
+            }}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
 
         <CommandPalette
           open={paletteOpen}
@@ -1496,6 +1527,7 @@ export default function App() {
               <button onClick={() => setPaletteOpen(true)} title={t('paletteButton')}>⌘K</button>
               <button onClick={() => setShowSavedViews(true)} title={t('viewsButton')}>☆ Views</button>
               {tab === 'editor' && <button onClick={() => setPresenting(true)} title={t('presentButton')}>▶ {t('present')}</button>}
+              <button onClick={() => setHistoryOpen(true)} title="History timeline">◷</button>
               <button onClick={undo} disabled={past.length === 0} title={t('undo')}>↶</button>
               <button onClick={redo} disabled={future.length === 0} title={t('redo')}>↷</button>
               <span className="model-title">{model ? primaryText(model.name) : 'No workspace'}</span>
@@ -1641,8 +1673,12 @@ export default function App() {
                     <InterfaceCatalog model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
                   ) : analysisTab === 'domains' ? (
                     <DomainMap model={model} onSelectDomain={(id) => { setDomainFilter(id); setTab('editor'); }} />
-                  ) : (
+                  ) : analysisTab === 'streams' ? (
                     <ValueStreams model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
+                  ) : analysisTab === 'traceability' ? (
+                    <TraceabilityPanel model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
+                  ) : (
+                    <MigrationTimelinePanel model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
                   )}
                 </>
               ) : tab === 'views' ? (

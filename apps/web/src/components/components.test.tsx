@@ -10,6 +10,7 @@ import Inspector from './Inspector';
 import MatrixView from './MatrixView';
 import ValidationPanel from './ValidationPanel';
 import ValueStreams from './ValueStreams';
+import { MigrationTimelinePanel, TraceabilityPanel } from './AnalysisPanels';
 import ViewDesigner from './ViewDesigner';
 import WorkspaceHome from './WorkspaceHome';
 
@@ -169,5 +170,32 @@ describe('ErrorBoundary', () => {
     fireEvent.click(screen.getByText('Try again'));
     expect(screen.getByText('recovered')).toBeTruthy();
     vi.restoreAllMocks();
+  });
+});
+
+describe('analysis panels', () => {
+  it('renders requirement traceability with coverage and uncovered lists', () => {
+    const model = createSampleModel();
+    model.elements.push(
+      { id: 'req-1', type: 'Requirement', name: [{ lang: 'en', value: 'Multi-language UI' }], documentation: [], properties: [] },
+      { id: 'req-2', type: 'Constraint', name: [{ lang: 'en', value: 'GDPR residency' }], documentation: [], properties: [] },
+    );
+    model.relationships.push({
+      id: 'rr-1', type: 'Realization', source: 'e-portal', target: 'req-1', name: [], documentation: [], properties: [],
+    });
+    render(<TraceabilityPanel model={model} onSelect={() => {}} />);
+    expect(screen.getAllByText('Multi-language UI').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('GDPR residency').length).toBeGreaterThan(0);
+  });
+
+  it('renders the migration timeline sorted by date', () => {
+    const model = createSampleModel();
+    model.elements.push(
+      { id: 'ms-2', type: 'Plateau', name: [{ lang: 'en', value: 'Target 2027' }], documentation: [], properties: [{ key: 'date', value: '2027-06-01' }] },
+      { id: 'ms-1', type: 'WorkPackage', name: [{ lang: 'en', value: 'Wave 1' }], documentation: [], properties: [{ key: 'date', value: '2026-12-01' }] },
+    );
+    render(<MigrationTimelinePanel model={model} onSelect={() => {}} />);
+    expect(screen.getByText('Wave 1')).toBeTruthy();
+    expect(screen.getByText('Target 2027')).toBeTruthy();
   });
 });
