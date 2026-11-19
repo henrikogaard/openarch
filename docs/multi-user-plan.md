@@ -136,3 +136,144 @@ has multiple orgs:
 
 Everything above the current three-pass review standard is D-D ('definition of done', AGENTS
 §12) + the new gates listed; each line in this table can be one PR.
+
+---
+
+## 8. Signup, identity provider, and workspace access — the concrete design
+
+(Answers the three questions posed 2026-11-19: *identity provider? how do people sign up?
+permissions and access to workspaces?*)
+
+### 8.1 The four deployment modes — each has its own "signup"
+
+OpenArch is self-hosted, local-first, and deliberately has **no account database**. "Signup"
+therefore means a different thing per mode, and all modes share one rule: **authentication is
+delegated, never stored** (no passwords, no emails, no reset flows — that risk is the IdP's
+core competency or the operator's explicit choice).
+
+| Mode | Identity source | How a person starts using it | Who decides access |
+|---|---|---|---|
+| **1. Local solo** (default, zero install) | None — anonymous | Open the app. Everything stays in the browser. No server, no account, nothing to sign up for. | Nobody — it is your machine |
+| **2. Invite team server** (2–15 people) | Operator-minted named tokens (hashed at rest) | Operator boots Docker; first boot **prints a one-time owner token** to the logs. Owner logs in, then either mints each person a named token or sends them an **invite code** (role baked in). The person pastes the invite code at first login → member. | The owner |
+| **3. SSO org server** (any size) | OIDC: Keycloak (compose profile), Entra ID, Google Workspace, Authentik/Authelia | Person signs in with SSO (PKCE); first login auto-creates their **personal workspace**; team workspaces arrive via (a) invite code or (b) **group→role mapping** from IdP claims. | The owner + the IdP group structure |
+| **4. Public demo** | SSO or lock behind a proxy | **Off by default**, and it stays off** — open registration contradicts the privacy stance and is the classic self-hosted takeover vector. If someone wants a demo, run it read-only behind a reverse proxy. | Deliberately unsupported |
+
+The answer to *"which identity provider?"*: **Keycloak for anything you must host yourself
+(the compose profile already exists), Entra/Google for orgs that already run SSO.** The
+product supports any OIDC RS256 issuer and treats the IdP as authoritative for identity and
+MFA. Password accounts are an explicit non-goal (§6).
+
+### 8.2 Signup flow per first-time persona (what the new user literally sees)
+
+**Operator (mode 2/3, first boot)**
+1. `docker compose up` → server detects no admin credentials are configured.
+2. Generates `openarch_admin_<32-char>` and prints it **once** to stderr:
+   `OpenArch: first boot — owner access token: … (copy now; shown once; store hashed)`.
+3. Stores only the SHA-256 hash; `openarch init --out .env` additionally writes a complete
+   starter env (token, JWT secret, SCAN hint) for restarts without re-checking logs.
+
+**Invited teammate (mode 2)**
+1. Receives out-of-band: a URL `https://arch.internal/?invite=<32-char code>` (the URL
+   contains no identity data — share it over Signal/Teams/whatever; the product never
+   emails anything).
+2. Logs in (their token, minted by the owner in Settings → People & tokens — shown once,
+   stored hashed) or, in SSO mode, just signs in.
+3. The app opens directly on **Redeem invite**; one click → member of that workspace with
+   the role the owner chose when minting the code. Audit log records both the invite
+   creation and the redemption.
+
+**SSO user first login (mode 3)**
+1. Browser redirects to the IdP; returns with `code` → PKCE exchange → access token in
+   sessionStorage only.
+2. Empty home screen shows exactly two things: **Redeem invite code** and — because
+   `OPENARCH_PERSONAL_WORKSPACE=true` by default — their fresh **Personal workspace**
+   (owned by them, member-gated so nobody else can read it).
+3. Team workspaces appear only when someone invites them or their IdP group maps to a role.
+
+### 8.3 What gets built (concrete pieces, in order)
+
+| Piece | Where | Detail |
+|---|---|---|
+| **One-time owner bootstrap** | server auth | No admin creds configured → generate, print once to stderr, persist SHA-256. Removes today's "hand-edit OPENARCH_TOKENS JSON" step. |
+| **Named tokens ("People & tokens")** | server + Settings UI | Owner creates tokens `{subject, displayName?, expiresAt?}`; stored **hashed**; displayed once; revocable list in Settings. This is user lifecycle without an IdP, and it retires plaintext-in-env tokens. Constant-time compare (pattern already used for SCIM). |
+| **Invites** | server + home UI | `POST /workspaces/:id/invites {role, ttlDays?}` (owner) → `{code,url}`; `GET` list; `DELETE` revoke; `POST /invites/redeem {code}` (any authenticated user) → membership with the baked role. 128-bit codes, single-use, default 7-day TTL, redemption rate-limit + lockout, fully audited. |
+| **OIDC + PKCE login** | web | Authorization-code + PKCE public client; refresh with silent renew; 401 surfaces a re-login prompt instead of a save failure. Static-token path remains for mode 2. |
+| **WS first-frame auth** | hub | Replace `?token=` with `{type:"auth"}` first message (proxy-log hygiene; already flagged in §1.2). |
+| **Personal workspace on login** | server | `OPENARCH_PERSONAL_WORKSPACE` (default true): create-on-first-login, owner-only. Nothing shared, nothing listed to others (member gating already enforces this). |
+| **`/api/me` echo** | web login dialog | After entering a token, show the resolved display name so people see *which identity* they took on before working. |
+| **IdP recipes** | `docs/deployment.md` | Keycloak realm/client/role recipe (maps to the compose profile), Entra app registration, Google Workspace, Authentik. Include "keep `sub` stable; display `preferred_username`; map `groups`". |
+
+### 8.4 Permission model — the full matrix, single source of truth
+
+Zones: **workspace data** (model, views, comments, snapshots), **governance** (approvals,
+waivers), **admin** (members, tokens, invites). Anonymous column exists only for explicitly
+open deployments (`OPENARCH_REQUIRE_AUTH=false` — the local-loops posture, warned about in
+`.env.example` and `docs/deployment.md`; with auth on, it does not exist).
+
+| Capability | Anonymous¹ | Authenticated non-member | Viewer | Editor | Owner |
+|---|---|---|---|---|---|
+| See workspace in list / open | ✅¹ | ❌ | ✅ | ✅ | ✅ |
+| Read model, views, history | ✅¹ | ❌ | ✅ | ✅ | ✅ |
+| Save edits (validated PUT) | ✅¹ | ❌ | ❌ | ✅ | ✅ |
+| Own conflict review outcome | — | — | — | ✅ | ✅ |
+| Comments (post) | ✅¹ | ❌ | ❌ | ✅ | ✅ |
+| Snapshots: create / restore² | ✅¹ | ❌ | ❌ | ✅ | ✅ |
+| Approvals: approve / reject baseline | ✅¹ | ❌ | ❌ | ❌ | ✅ |
+| Waivers: add / remove | ✅¹ | ❌ | ❌ | ❌ | ✅ |
+| Members & group→role mapping | ✅¹ | ❌ | ❌ | ❌ | ✅ |
+| Named tokens (create/revoke) | — | ❌ | ❌ | ❌ | ✅³ |
+| Invites: create/revoke | ✅¹ | ❌ | ❌ | ❌ | ✅ |
+| Redeem invite code | — | ✅ | ✅ | ✅ | ✅ |
+| Real-time room (presence/focus) | ✅¹ | ❌ | ✅ | ✅ | ✅ |
+| Delete workspace | ✅¹ | ❌ | ❌ | ❌ | ✅ |
+
+¹ *Open mode default-off recommendation; with auth on this column is empty.*
+² *Restore is deliberately owner/editor — an editor triggering restore snapshots first, so it
+stays reversible.*
+³ *Token minting is a server-operator concern, not per-workspace: gate to the bootstrap
+owner (subject == `OPENARCH_ADMIN`) — the person who controls the container.*
+
+Design rules the matrix encodes (and the tests must therefore assert):
+
+- **Membership is the only gate for reads.** No route ever answers for a non-member, and
+  *workspace names/counts are invisible to non-members* (list filtering already works this
+  way — the cross-org fuzz suite from §4.3 keeps it true for every future `:id` route).
+- **Governance sits one role above editing** (waivers/approvals owner-only, as shipped).
+- **Invites flip a non-member into a member; they never grant owner.** Escalating to owner
+  happens only by an existing owner editing members — invite minting cannot become a
+  privilege-escalation path even if a code leaks.
+- **Tokens are identity, not permission.** A named token says *who you are*; every capability
+  above still flows from membership per workspace. This is why token minting is admin-scoped
+  and hashed: leaking the token store yields identities, not access to other people's models.
+- **Everything is audited with the actor.** Invite create/redeem, token create/revoke,
+  member edits — all owner actions carry subject + timestamp (the hash-chained audit from
+  §2.3 then makes the trail tamper-evident).
+
+### 8.5 What this plan deliberately still does not add
+
+- **No passwords, no email addresses, no verification emails, no account settings page.**
+  If a deployment wants those, they run Keycloak and get all of it there.
+- **No "request access" button.** The owner's contact channel is out-of-band by design; the
+  product does not become a messaging surface.
+- **No open registration**, even behind a flag: a misconfigured flag becoming a public
+  write-capable instance is the worst-case failure mode of a self-hosted tool, so the flag
+  does not exist to misconfigure.
+- **No cross-workspace browsing for non-members** — including super-admins: the bootstrap
+  owner can *manage identity* (tokens/invites/membership via the API) because they control
+  the host, but the UI never surfaces other people's models to them beyond what membership
+  and the org-scoped portfolio already grant. Keep the operator honest with the same gates.
+
+### 8.6 Build order and gates
+
+| Step | Ships | Test gate |
+|---|---|---|
+| 1 | Bootstrap token + `openarch init` | integration: first-boot print-once, hashed verify, reuse rejection |
+| 2 | Named tokens (hash store + Settings UI + `/api/me`) | integration: mint/revoke/constant-time; UI test for shown-once flow |
+| 3 | Invites (API + home redemption UI) | integration: single-use, expiry, lockout after N attempts, audit entries; escalation tests (invite can never mint owner) |
+| 4 | OIDC+PKCE + WS first-frame auth | E2E login against compose Keycloak (opt-in job), WS replay-auth test |
+| 5 | Personal workspace + empty-home UX | member-gating regression (others never see it), fuzz-suite entry |
+
+Steps 1–3 are mode-2 complete (a small team can run entirely without an IdP); step 4 is
+mode-3 complete. Every step is one PR against the D-D standard, and none of them changes the
+permission matrix in 8.4 — additions to capabilities require updating this document first.
+
