@@ -1,0 +1,22 @@
+{
+  "name": "openarch-cli",
+  "version": "0.1.0",
+  "description": "OpenArch command line \u2014 validate, convert, diff, check, and report ArchiMate models",
+  "license": "MIT",
+  "repository": "henrikogaard/openarch",
+  "type": "module",
+  "bin": {
+    "openarch": "dist/cli.mjs"
+  },
+  "files": [
+    "dist/cli.mjs",
+    "dist/cli.mjs.map",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node ../../scripts/bundle-cli.mjs"
+  }
+}

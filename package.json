@@ -30,7 +30,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "cli:bundle": "node scripts/bundle-cli.mjs",
+    "cli:pack": "node scripts/bundle-cli.mjs && cd packages/cli && npm pack --pack-destination ../../tmp-pack",
+    "docs:build": "node scripts/build-docs.mjs"
   },
   "version": "0.1.0",
   "workspaces": [
