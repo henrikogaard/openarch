@@ -77,6 +77,7 @@ export async function publishToConfluence(
       'content-type': 'application/json',
       authorization: authHeader(config, 'confluence'),
     },
+    signal: AbortSignal.timeout(20000),
     body: JSON.stringify({
       type: 'page',
       title,

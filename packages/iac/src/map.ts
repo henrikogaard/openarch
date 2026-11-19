@@ -295,9 +295,12 @@ function allowedType(
 }
 
 /**
- * The core metamodel denies same-type relationships via denySelf. For distinct
- * workload elements of the same type (e.g. two compose services) Serving is
- * still meaningful, so allow it while keeping every other rule intact.
+ * Core's `isAllowedRelationship` is kind/layer-based; some same-type pairs it
+ * flags (e.g. Serving between two compose services) are meaningful for
+ * infrastructure topologies, so this helper attempts a curated candidate list
+ * and falls back to whatever the metamodel allows. Same-type Serving stays a
+ * deliberate, documented extension — core validation reports it as a warning,
+ * never silently.
  */
 function isRelationshipAllowed(
   type: string,

@@ -1,16 +1,39 @@
-import type { Model, SavedView } from '@openarch/core';
+import type { Model, ModelSummary, SavedView } from '@openarch/core';
 import { createStore, del, get, keys, set } from 'idb-keyval';
 import { type ModelRepository, summarize } from './types';
 
 const modelStore = createStore('openarch', 'models');
 const savedViewStore = createStore('openarch', 'saved-views');
+// Separate database: adding a store to an existing IDB database after
+// first creation is version-fragile across environments; a standalone DB
+// keeps the index self-contained and cheap.
+const summaryStore = createStore('openarch-summaries', 'summaries');
 
 /** Default adapter: models live in the browser, no account and no server. */
 export class LocalRepository implements ModelRepository {
   async listModels() {
-    const ids = (await keys(modelStore)).filter((id): id is string => typeof id === 'string');
-    const models = await Promise.all(ids.map((id) => get<Model>(id, modelStore)));
-    return models.filter((model): model is Model => Boolean(model)).map(summarize);
+    // Summaries are indexed at save time so listing never deserializes every
+    // full model (the home screen previously read all workspaces wholesale).
+    const ids = (await keys(summaryStore)).filter((id): id is string => typeof id === 'string');
+    const summaries = await Promise.all(ids.map((id) => get<ModelSummary>(id, summaryStore)));
+    const found = summaries.filter((summary): summary is ModelSummary => Boolean(summary));
+    if (found.length === 0) {
+      // First run after this upgrade, or legacy data without an index: build it once.
+      const modelIds = (await keys(modelStore)).filter((id): id is string => typeof id === 'string');
+      if (modelIds.length === 0) return [];
+      const models = await Promise.all(modelIds.map((id) => get<Model>(id, modelStore)));
+      const rebuilt = await Promise.all(
+        models
+          .filter((model): model is Model => Boolean(model))
+          .map(async (model) => {
+            const summary = summarize(model);
+            await set(model.id, summary, summaryStore);
+            return summary;
+          }),
+      );
+      return rebuilt;
+    }
+    return found;
   }
 
   getModel(id: string): Promise<Model | undefined> {
@@ -20,11 +43,15 @@ export class LocalRepository implements ModelRepository {
   async saveModel(model: Model, expectedVersion?: number): Promise<void> {
     void expectedVersion;
     // Stamp the save time so the workspace list can show recency.
-    await set(model.id, { ...model, updatedAt: new Date().toISOString() }, modelStore);
+    const stamped = { ...model, updatedAt: new Date().toISOString() };
+    await set(model.id, stamped, modelStore);
+    // Keep the summary index in sync for cheap listing.
+    await set(model.id, summarize(stamped), summaryStore);
   }
 
   async deleteModel(id: string): Promise<void> {
     await del(id, modelStore);
+    await del(id, summaryStore);
   }
 
   async listSavedViews(modelId: string): Promise<SavedView[]> {

@@ -1,4 +1,4 @@
-import type { Model, SavedView, Waiver } from '@openarch/core';
+import type { Model, ModelSummary, SavedView, Waiver } from '@openarch/core';
 import { type ModelRepository, summarize } from './types';
 
 export interface ModelMeta {
@@ -41,8 +41,30 @@ export class ServerRepository implements ModelRepository {
   }
 
   async listModels() {
-    const models = await this.request<Model[]>('/models');
-    return models.map(summarize);
+    // The server exposes paginated summaries (?summary=1) so the home
+    // screen never downloads every full workspace model. Fall back to the
+    // full-array route for older servers.
+    try {
+      const { items, nextCursor } = await this.request<{ items: ModelSummary[]; nextCursor?: string }>(
+        '/models?summary=1&limit=200',
+      );
+      const page = Array.isArray(items) ? items : [];
+      // Cursor pagination: fetch the next pages while a cursor is offered.
+      let cursor = nextCursor;
+      let guard = 0;
+      while (cursor && guard < 20) {
+        const next = await this.request<{ items: ModelSummary[]; nextCursor?: string }>(
+          `/models?summary=1&limit=200&cursor=${encodeURIComponent(cursor)}`,
+        );
+        page.push(...(Array.isArray(next.items) ? next.items : []));
+        cursor = next.nextCursor;
+        guard += 1;
+      }
+      return page;
+    } catch {
+      const models = await this.request<Model[]>('/models');
+      return models.map(summarize);
+    }
   }
 
   async getModel(id: string): Promise<Model | undefined> {

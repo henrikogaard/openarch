@@ -212,10 +212,20 @@ function serializeProperties(
     .map((property) => {
       const ref = refFor(property);
       if (!ref) return undefined;
-      const lang = property.raw ? str((property.raw.value as RawXml)?.['@_xml:lang']) : '';
+      // Preserve multi-language <value> variants (and any other raw fidelity)
+      // when the raw fragment is intact; fall back to the (primary language)
+      // parsed value otherwise.
+      const values = asArray<RawXml>(property.raw?.value);
+      const languageValues = values.filter((value) => '#text' in value || '@_xml:lang' in value);
+      const valueClause = languageValues.length
+        ? languageValues.map((value) => ({
+            ...(str(value['@_xml:lang']) ? { '@_xml:lang': str(value['@_xml:lang']) } : {}),
+            '#text': str(value['#text']) || property.value,
+          }))
+        : [{ '#text': property.value }];
       return {
         '@_propertyDefinitionRef': ref,
-        value: [{ ...(lang ? { '@_xml:lang': lang } : {}), '#text': property.value }],
+        value: valueClause,
       } as RawXml;
     })
     .filter((value): value is RawXml => Boolean(value));

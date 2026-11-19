@@ -96,6 +96,14 @@ export function createGitHubFileStore(options: {
         headers,
         signal: timeout(),
       });
+      // GitHub's Contents API caps directory listings at 1,000 entries and
+      // Errors with a 403 hinting at the git trees API beyond that — surface
+      // it loudly instead of a silent partial list.
+      if (response.status === 403) {
+        throw new Error(
+          'GitHub list failed: 403 (directory may exceed 1000 files — split workspaces across subfolders)',
+        );
+      }
       if (!response.ok) throw new Error(`GitHub list failed: ${response.status}`);
       const entries = (await response.json()) as Array<{ name: string; type: string }>;
       return entries.filter((entry) => entry.type === 'file').map((entry) => `${root ? `${root}/` : ''}${entry.name}`);

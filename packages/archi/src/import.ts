@@ -71,6 +71,8 @@ interface ImportCollections {
   warnings: string[];
   /** Archi 5+ property definitions map (id → name) for property resolution. */
   definitionNames: Map<string, string>;
+  /** Ids already imported — used to skip duplicates with a warning. */
+  seenIds: Set<string>;
 }
 
 function asArray<T>(value: T | T[] | undefined | null): T[] {
@@ -236,6 +238,14 @@ function addConcept(
   out: ImportCollections,
 ): void {
   const type = attr(raw, 'type');
+  const id = attr(raw, 'id');
+  // Duplicate ids in a single file are xs:ID violations — import once and
+  // warn, instead of silently producing a model that fails validation.
+  if (id && out.seenIds.has(id)) {
+    out.warnings.push(`Skipping duplicate ${isRelationshipType(type) ? 'relationship' : 'element'} id "${id}"`);
+    return;
+  }
+  if (id) out.seenIds.add(id);
   if (isRelationshipType(type)) {
     out.relationships.push(parseRelationship(raw, type, out.warnings, out.definitionNames));
   } else {
@@ -301,10 +311,21 @@ function parseView(raw: XmlNode, warnings: string[]): View {
     }
 
     const relationship = asNode(asArray(connection.archimateRelationship)[0]);
+    const relationshipRef = attr(relationship, 'href');
+    if (!relationshipRef) {
+      // An edge without a relationship reference dangles in every consumer;
+      // skip it loudly instead of importing silent corruption.
+      warnings.push(
+        `Skipping connection "${attr(connection, 'id')}" in view "${
+          viewName || viewId
+        }": no archimateRelationship href`,
+      );
+      continue;
+    }
     edges.push({
       id: attr(connection, 'id'),
       type: 'Relationship',
-      relationshipRef: attr(relationship, 'href'),
+      relationshipRef,
       source,
       target,
       bendpoints: nodes(connection.bendpoint).map((point) => ({
@@ -464,6 +485,7 @@ export function importArchi(bytes: Uint8Array): ArchiImportResult {
         ] as [string, string]),
       ),
     ),
+    seenIds: new Set(),
   };
 
   for (const folder of nodes(root.folder)) {

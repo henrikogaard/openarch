@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseAoef, serializeAoef } from './aoef';
+import type { Model, RawXml } from './types';
 import { createSampleModel } from './validation';
 
 const fixture = new URL('../../../examples/archisurance.xml', import.meta.url);
@@ -67,5 +68,49 @@ describe('AOEF regressions', () => {
       xml = serializeAoef(parseAoef(xml));
     }
     expect(xml).not.toMatch(/<property\s[^>]*>\s*<property\s/);
+  });
+});
+
+describe('multi-language property values round-trip', () => {
+  it('preserves every language variant of a property value on export', () => {
+    const model: Model = {
+      ...createSampleModel(),
+      elements: [
+        {
+          id: 'e-multi',
+          type: 'BusinessActor',
+          name: [{ lang: 'en', value: 'Multi' }],
+          documentation: [],
+          properties: [
+            {
+              key: 'tier',
+              value: 'gold',
+              raw: {
+                '@_propertyDefinitionRef': 'propdef-x',
+                value: [
+                  { '@_xml:lang': 'en', '#text': 'gold' },
+                  { '@_xml:lang': 'no', '#text': 'gull' },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const xml = serializeAoef(model);
+    expect(xml).toContain('<value xml:lang="en">gold</value>');
+    expect(xml).toContain('<value xml:lang="no">gull</value>');
+    // And the round trip keeps both.
+    const reparsed = parseAoef(xml);
+    const property = reparsed.elements[0].properties[0];
+    expect(property.value).toBe('gold');
+    expect((property.raw?.value as RawXml[]).length).toBe(2);
+  });
+
+  it('exports app-created properties without an xml:lang (schema unchanged)', () => {
+    const model = createSampleModel();
+    const xml = serializeAoef(model);
+    expect(xml).toContain('<value>2.4.1</value>');
+    expect(xml).not.toContain('<value xml:lang="en">2.4.1</value>');
   });
 });

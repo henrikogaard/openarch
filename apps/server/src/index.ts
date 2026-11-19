@@ -438,10 +438,24 @@ app.get('/api/models', async (request, reply) => {
   // workspace is visible; with auth on, membership is required. An optional
   // ?orgId= scopes the list to one tenant (multi-tenant deployments).
   const orgId = (request.query as { orgId?: string }).orgId;
-  return [...workspaces.values()]
+  const query = request.query as { summary?: string; limit?: string; cursor?: string };
+  const readable = [...workspaces.values()]
     .filter((workspace) => !authConfig.required || isMember(workspace.members, actor))
-    .filter((workspace) => !orgId || workspace.orgId === orgId)
-    .map((workspace) => ({ ...workspace.model, updatedAt: workspace.updatedAt }));
+    .filter((workspace) => !orgId || workspace.orgId === orgId);
+  // Summary mode returns lightweight metadata (the web home screen only
+  // needs summaries; full models are fetched on open) and supports simple
+  // cursor pagination for large deployments.
+  if (query.summary === '1') {
+    const summaries = readable.map((workspace) => ({
+      ...workspaceSummary(workspace.model),
+      updatedAt: workspace.updatedAt,
+    }));
+    const limit = Math.min(200, Math.max(1, Number(query.limit) || 200));
+    const startIndex = query.cursor ? Math.max(0, summaries.findIndex((s) => s.id === query.cursor)) : 0;
+    const items = summaries.slice(startIndex, startIndex + limit);
+    return { items, nextCursor: startIndex + limit < summaries.length ? items[items.length - 1].id : undefined };
+  }
+  return readable.map((workspace) => ({ ...workspace.model, updatedAt: workspace.updatedAt }));
 });
 
 app.get('/api/models/:id/meta', async (request, reply) => {

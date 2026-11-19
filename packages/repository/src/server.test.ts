@@ -40,6 +40,7 @@ afterEach(() => {
 describe('ServerRepository', () => {
   it('creates new workspaces through POST /models (server mode is usable)', async () => {
     const { calls } = mockFetch({
+      'GET /': { status: 404 },
       'PUT /models': { status: 404 },
       'POST /models': { status: 201, body: {} },
     });
