@@ -60,8 +60,19 @@ export function serializeNativeModel(model: Model): string {
  */
 export function parseNativeModel(json: string): Model {
   const parsed = JSON.parse(json) as Model & { schemaVersion?: number };
-  if (!parsed || typeof parsed.id !== 'string' || !Array.isArray(parsed.elements)) {
-    throw new Error('Not an OpenArch native model file');
+  const invalid =
+    !parsed ||
+    typeof parsed !== 'object' ||
+    typeof parsed.id !== 'string' ||
+    !Array.isArray(parsed.elements) ||
+    !Array.isArray(parsed.relationships) ||
+    !Array.isArray(parsed.views) ||
+    !Array.isArray(parsed.name) ||
+    !Array.isArray(parsed.propertyDefinitions);
+  if (invalid) {
+    throw new Error(
+      'Not an OpenArch native model file (expected id, name, propertyDefinitions, elements, relationships, views arrays)',
+    );
   }
   const version = parsed.schemaVersion ?? 0;
   if (version > NATIVE_SCHEMA_VERSION) {

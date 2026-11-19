@@ -14,7 +14,10 @@ export class ServerRepository implements ModelRepository {
   constructor(private readonly baseUrl = 'http://localhost:8080/api') {}
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, init);
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      signal: AbortSignal.timeout(15000),
+      ...init,
+    });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -54,7 +57,42 @@ export class ServerRepository implements ModelRepository {
   }
 
   async saveModel(model: Model, expectedVersion?: number): Promise<void> {
-    const version = expectedVersion ?? (await this.getModelMeta(model.id)).version;
+    const encoded = encodeURIComponent(model.id);
+    if (expectedVersion === undefined) {
+      // No version on hand: this is either a brand-new workspace (POST) or a
+      // client whose meta fetch failed. Refuse to blind-write in the update
+      // case (that is exactly the stale-client scenario If-Match exists to
+      // block); create via POST when the workspace does not exist yet.
+      let meta: (ModelMeta & { updatedAt?: string }) | undefined;
+      try {
+        meta = await this.request<ModelMeta>(`/models/${encoded}/meta`);
+      } catch {
+        meta = undefined;
+      }
+      if (meta) {
+        const savedAt = Date.parse(model.updatedAt ?? '');
+        const serverAt = Date.parse(meta.updatedAt);
+        // If the server's copy is newer than ours and we had a stamp, someone
+        // else wrote in between — surface the conflict instead of clobbering.
+        if (!Number.isNaN(savedAt) && !Number.isNaN(serverAt) && serverAt > savedAt) {
+          throw Object.assign(new Error('Conflict: workspace changed'), {
+            currentVersion: meta.version,
+          });
+        }
+        return this.putModel(model, meta.version);
+      }
+      // Not on the server yet — create.
+      await this.request('/models', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(model),
+      });
+      return;
+    }
+    await this.putModel(model, expectedVersion);
+  }
+
+  private async putModel(model: Model, version: number): Promise<void> {
     await this.request(`/models/${encodeURIComponent(model.id)}`, {
       method: 'PUT',
       headers: {

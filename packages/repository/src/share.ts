@@ -73,10 +73,13 @@ export async function createShareHash(model: Model, viewId?: string): Promise<st
 export async function readShareHash(hash: string): Promise<Model | undefined> {
   try {
     const value = hash.replace(/^#?share=/, '');
+    // Reader-side cap: a crafted fragment must not decompress-unbound into
+    // JSON.parse (the writer caps creation; this guards consumption).
+    if (value.length > 65536) return undefined;
     const marker = value[0];
     const bytes = fromBase64Url(value.slice(1));
     const json = marker === 'z' ? await gunzip(bytes) : new TextDecoder().decode(bytes);
-    if (!json) return undefined;
+    if (!json || json.length > 5_000_000) return undefined;
     const payload = JSON.parse(json) as SharePayload;
     if ((payload.v !== 2 && payload.v !== 1) || !Array.isArray(payload.elements)) {
       return undefined;
