@@ -460,6 +460,38 @@ proving it, and the diagram survives a round-trip looking the way the user left 
 
 ---
 
+
+## 17. Enhancement round (2026-11-19) — review-driven UX, features, engineering
+
+Everything below shipped after the full-codebase review fix-up, closing the "what's next"
+suggestions end-to-end:
+
+**UX** — shortcut cheatsheet (`?`) with a single-source registry; focus traps + focus restore
+in every modal; skip-to-content link; `prefers-reduced-motion` and visible focus policy;
+three-pane conflict review (per-entity changed/only-yours/only-theirs + semantic merge),
+replacing the two-button overwrite dialog; labelled undo timeline scrubber (◷); presentation
+mode gains ←/→ view switching, `F` fullscreen and a HUD.
+
+**Features** — deterministic auto-layout engine (`layoutView`: grid + layered) exposed in the MCP
+(`auto_layout_view`); requirement traceability + uncovered report and migration timeline
+analysis tabs (Plateau/WorkPackage/Deliverable with date ordering); scenario compare on
+Portfolio (overlap score + changed/new/dropped census); draw.io import (mxfile/mxGraphModel →
+elements + positioned view, actor-shape heuristic, auto-scaling, dangling-edge warnings) in web
++ CLI; crash journal (IndexedDB mirror of in-progress edits with recovery on next open);
+PWA shell (manifest + service worker, cache-first static, API never cached); member management
+UI + group→role mapping (Settings section, owner-only endpoints, always ≥1 owner guard).
+
+**Engineering** — server `GET /api/models?summary=1` pagination (client uses it); LocalRepository
+summary index (home screen no longer deserializes every model); AI context index-building
+(O(E·V) → O(n)); full i18n sweep of Collaborate/ViewDesigner/Inspector/Dashboard/
+ImportPreview/GitConfigDialog/Onboarding (~80 new EN/NB pairs); `openarch iac diff … --fail-on
+drift` CI gate; GitHub listing 403 explained (1000-file cap); ACF fidelity (multi-language
+property values round-trip); enrichment upsert de-duplication + deterministic id
+disambiguation; bundle budget CI step (eager JS < 1.45 MB — currently 850 KiB);
+server-mode E2E in CI caught and pinned two real bugs (deep-link mode loss, loopback CORS).
+
+MCP tool count: 41 (auto_layout_view, get_validation_issues, render_view_svg added).
+
 ## 16. Immediate backlog
 
 | Order | Item | Phase | Status |
@@ -488,6 +520,10 @@ proving it, and the diagram survives a round-trip looking the way the user left 
 | 22 | SCIM 2.0 Users API | 5 | ✅ |
 | 23 | Multi-tenant org scoping | 5 | ✅ |
 | 24 | Marketplace | 5 | ⛔ not started (adoption gate) |
+| 25 | i18n full sweep of remaining screens (Collaborate/ViewDesigner/…) | 6 | ✅ done in enhancement round |
+| 26 | Member management + group→role UI | 8 | ✅ done in enhancement round |
+| 27 | Conflict 3-pane / undo timeline / shortcuts / focus traps | 6/7 | ✅ done in enhancement round |
+| 28 | Server-mode E2E in CI | 6 | ✅ done in enhancement round |
 
 ---
 
