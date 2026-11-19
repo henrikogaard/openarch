@@ -18,7 +18,7 @@ import { checkRules, exportWorkspaceMarkdown, parseRules } from '@openarch/repor
 // duplicate drifted from the server/web semantics.
 
 
-type Format = 'xml' | 'json' | 'csv' | 'mermaid' | 'dsl';
+type Format = 'xml' | 'json' | 'csv' | 'mermaid' | 'dsl' | 'drawio';
 
 const HELP = `OpenArch CLI — manage ArchiMate® models
 
@@ -33,6 +33,7 @@ Commands:
   check <file> [rules.json]  Run architecture rules; exit 1 on errors
   report <file> <output.md>  Write a Markdown workspace report
   script <model> <file.js> [out]  Run a sandboxed script against a model (must return the model)
+  iac diff <model> <iac-file> [--fail-on drift]  Report IaC drift (CI gate with --fail-on)
   doctor                     Print environment and capability information
   --help                     Show this help
 
@@ -67,10 +68,12 @@ function formatFromPath(filePath: string): Format {
     case '.dsl':
     case '.structurizr':
       return 'dsl';
+    case '.drawio':
+      return 'drawio';
     default:
       throw new Error(
         `Unsupported file extension "${extension || '(none)'}" for "${filePath}". ` +
-          'Expected one of .xml, .json, .csv, .mermaid, .dsl or .archimate.',
+          'Expected one of .xml, .json, .csv, .mermaid, .dsl, .drawio or .archimate.',
       );
   }
 }
@@ -78,7 +81,7 @@ function formatFromPath(filePath: string): Format {
 function describeFile(filePath: string): string {
   const format = formatFromPath(filePath);
   if (format !== 'xml' && format !== 'json' && format !== 'dsl') {
-    throw new Error(`Cannot read "${filePath}" as a model: expected a .xml, .json or .dsl file.`);
+    throw new Error(`Cannot read "${filePath}" as a model: expected a .xml, .json, .dsl or .drawio file.`);
   }
   return format;
 }
@@ -92,16 +95,25 @@ async function readModelFile(filePath: string): Promise<Model> {
       throw new Error(`Could not read "${filePath}" as an Archi model: ${errorMessage(error)}`);
     }
   }
+  if (filePath.toLowerCase().endsWith('.drawio')) {
+    const { importDrawIo } = await import('@openarch/enrichment');
+    const result = importDrawIo(await readFile(filePath, 'utf8'));
+    if (result.warnings.length) {
+      console.log(`draw.io import skipped ${result.warnings.length} unsound part(s)`);
+    }
+    return result.model;
+  }
   const format = describeFile(filePath);
-  let text: string;
+  let modelText: string;
   try {
-    text = await readFile(filePath, 'utf8');
+    modelText = await readFile(filePath, 'utf8');
   } catch (error) {
     throw new Error(`Could not read "${filePath}": ${errorMessage(error)}`);
   }
   try {
-    if (format === 'dsl') return c4ToModel(parseStructurizr(text));
-    return format === 'xml' ? parseAoef(text) : parseNativeModel(text);
+    if (format === 'dsl') return c4ToModel(parseStructurizr(modelText));
+    if (format === 'xml') return parseAoef(modelText);
+    return parseNativeModel(modelText);
   } catch (error) {
     throw new Error(`Could not parse "${filePath}" as ${format.toUpperCase()}: ${errorMessage(error)}`);
   }
@@ -117,6 +129,8 @@ function serializeModel(model: Model, format: Format): string {
       return exportElementsCsv(model);
     case 'dsl':
       return modelToC4(model);
+    case 'drawio':
+      throw new Error('Serializing to draw.io is not supported (import only).');
     case 'mermaid': {
       const view = model.views[0];
       if (!view) {
@@ -273,6 +287,42 @@ async function report(filePath: string, output: string): Promise<number> {
   return 0;
 }
 
+
+/**
+ * `openarch iac diff <model> <iac file> [--fail-on drift]` — re-import the IaC
+ * source against the stored model and report drift; exits 1 when drift exists
+ * and --fail-on drift is given (intended as a CI gate).
+ */
+async function iacDiff(modelPath: string, sourcePath: string, failOn?: string): Promise<number> {
+  const { parseTerraformPlan, mapResources, diffIacImport } = await import('@openarch/iac');
+  const model = await readModelFile(modelPath);
+  const source = await readFile(sourcePath, 'utf8');
+  const resources = parseTerraformPlan(source);
+  const imported = mapResources(resources);
+  const drift = diffIacImport(model, imported);
+  const totalDrift = drift.added.length + drift.removed.length + drift.changed.length;
+  console.log(`IaC drift for ${modelPath}:`);
+  console.log(`  + ${drift.added.length} added`);
+  console.log(`  ~ ${drift.changed.length} changed`);
+  console.log(`  - ${drift.removed.length} removed`);
+  const limit = 10;
+  for (const element of drift.added.slice(0, limit)) {
+    console.log(`  + ${element.properties.find((property) => property.key === 'iacAddress')?.value ?? element.id}`);
+  }
+  for (const change of drift.changed.slice(0, limit)) {
+    console.log(`  ~ ${change.incoming.properties.find((property) => property.key === 'iacAddress')?.value ?? change.incoming.id}`);
+  }
+  for (const element of drift.removed.slice(0, limit)) {
+    console.log(`  - ${element.properties.find((property) => property.key === 'iacAddress')?.value ?? element.id}`);
+  }
+  if (totalDrift > (limit * 3)) console.log('  …more');
+  if (failOn === 'drift' && totalDrift > 0) {
+    console.log(`Failing: ${totalDrift} drift finding(s).`);
+    return 1;
+  }
+  return 0;
+}
+
 async function diff(aPath: string, bPath: string): Promise<number> {
   const [a, b] = await Promise.all([readModelFile(aPath), readModelFile(bPath)]);
   const diff = canonicalDiffModels(a, b);
@@ -381,6 +431,12 @@ async function main(): Promise<number> {
     case 'script':
       if (args.length < 2) throw new Error('Command "script" expects at least 2 arguments (model, script.js).');
       return script(args[0], args[1], args[2]);
+    case 'iac':
+      // openarch iac diff <model.json> <terraform-show.json> [--fail-on]
+      if (args[0] !== 'diff' || (args.length !== 3 && args.length !== 5)) {
+        throw new Error('Usage: openarch iac diff <model> <terraform plan JSON|yaml|k8s|compose> [--fail-on drift]');
+      }
+      return iacDiff(args[1], args[2], args[4]);
     case 'doctor':
       requireArgs(args, command, 0);
       return doctor();

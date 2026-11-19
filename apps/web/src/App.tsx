@@ -79,6 +79,7 @@ import DeploymentView from './components/DeploymentView';
 import ErrorBoundary from './components/ErrorBoundary';
 import GitConfigDialog, { type GitConfig } from './components/GitConfigDialog';
 import { ICON_PACKS } from './iconPacks';
+import { journalClear, journalRead, journalWrite } from './journal';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
 import ImportPreview from './components/ImportPreview';
@@ -293,6 +294,8 @@ export default function App() {
     const current = modelRef.current;
     if (!current) return;
     const next = updater(current);
+    // Crash journal: mirror the edit so a dead tab can recover <15s of work.
+    journalWrite({ id: next.id }, () => serializeNativeModel(next));
     if (label) {
       setUndoEntries((entries) =>
         [...entries, { index: entries.length, model: next, summary: label }].slice(-60),
@@ -495,6 +498,28 @@ export default function App() {
   const openWorkspace = async (id: string) => {
     // Flush a pending autosave so switching workspaces never loses edits.
     if (modelRef.current && dirty) await save({ silent: true });
+    // Crash recovery: if the journal holds work newer than the last save
+    // (killed tab, sleep, crash), offer it before the fresh copy overwrites.
+    try {
+      const journal = await journalRead(id, null);
+      if (journal && (await repository.getModel(id))) {
+        const fresh = await repository.getModel(id);
+        const lastSaved = fresh?.updatedAt ?? null;
+        const recoverable = await journalRead(id, lastSaved);
+        if (recoverable) {
+          const modelJson = String(recoverable.model);
+          const recovered = parseNativeModel(modelJson);
+          // Only offer when the journal actually differs from the saved copy.
+          if (JSON.stringify(recovered) !== JSON.stringify(fresh)) {
+            commit(() => recovered);
+            notify('Recovered unsaved changes from your last session');
+            journalClear(id);
+          }
+        }
+      }
+    } catch {
+      // Journal is best-effort recovery; never block opening a workspace.
+    }
     const next = await repository.getModel(id);
     if (!next) {
       notify('Workspace not found');
@@ -649,6 +674,8 @@ export default function App() {
           setDirty(false);
           setLastSavedAt(new Date().toISOString());
           savedModelRef.current = current;
+          // The repository now has this work: drop the crash journal copy.
+          if (savedId) journalClear(savedId);
         }
         if (!options.silent) {
           const errors = validateModel(current).filter((issue) => issue.severity === 'error').length;
@@ -716,6 +743,11 @@ export default function App() {
         if (result.warnings.length) {
           notify(`Imported with ${result.warnings.length} warning(s)`);
         }
+      } else if (file.name.toLowerCase().endsWith('.drawio') || file.name.toLowerCase().endsWith('.xml.drawio')) {
+        const { importDrawIo } = await import('@openarch/enrichment');
+        const result = importDrawIo(await file.text());
+        imported = result.model;
+        if (result.warnings.length) notify(`draw.io import: ${result.warnings.length} warning(s)`);
       } else if (file.name.toLowerCase().endsWith('.dsl') || file.name.toLowerCase().endsWith('.structurizr')) {
         imported = c4ToModel(parseStructurizr(await file.text()));
       } else {

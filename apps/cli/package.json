@@ -12,7 +12,9 @@
   "dependencies": {
     "@openarch/c4": "*",
     "@openarch/core": "*",
+    "@openarch/enrichment": "*",
     "@openarch/exporters": "*",
+    "@openarch/iac": "*",
     "@openarch/repository": "*"
   },
   "devDependencies": {

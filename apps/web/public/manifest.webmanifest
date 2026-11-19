@@ -1,0 +1,18 @@
+{
+  "name": "OpenArch",
+  "short_name": "OpenArch",
+  "description": "Open-source, local-first ArchiMate 3.2 modelling workbench",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f7fa",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
