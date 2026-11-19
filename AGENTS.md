@@ -269,7 +269,10 @@ file — with an E2E test proving it.
 
 - Do not replace the document model with a SQL schema.
 - Do not add a CMDB/ITSM or a full TOGAF process engine.
-- Do not add real-time CRDT editing.
+- Do not add real-time CRDT editing. (Real-time *awareness* is fine and exists: an
+  authenticated per-workspace WebSocket hub for presence, focus, comment and save events —
+  every write still goes through validated REST. Structural conflicts resolve through
+  optimistic locking + the three-way review.)
 - Do not make a server mandatory for local use.
 - Do not bypass metamodel validation for AI writes.
 - Do not chase Gartner-MQ feature parity.

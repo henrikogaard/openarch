@@ -524,3 +524,124 @@ describe('member management and group→role mapping', () => {
     expect(role.body.roles?.['sample-model']).toBe('owner');
   });
 });
+
+describe('real-time collaboration hub (authenticated websockets)', () => {
+
+  const WebSocketCtor = require('ws') as new (url: string) => {
+    send: (data: string) => void;
+    close: (code?: number, reason?: string) => void;
+    on: (event: string, handler: (data?: unknown) => void) => void;
+    onopen?: () => void;
+    readyState: number;
+  };
+
+  function connect(token: string): Promise<{
+    socket: ReturnType<typeof openSocket>;
+    events: Array<Record<string, unknown>>;
+    next: (type?: string) => Promise<Record<string, unknown>>;
+  }> {
+    function openSocket() {
+      return new WebSocketCtor(`ws://127.0.0.1:${port}/api/models/sample-model/rt?token=${token}`);
+    }
+    const socket = openSocket();
+    const events: Array<Record<string, unknown>> = [];
+    socket.on('message', (data: unknown) => {
+      events.push(JSON.parse(String(data)) as Record<string, unknown>);
+    });
+    async function next(type?: string) {
+      for (let waited = 0; waited < 5000; waited += 50) {
+        const index = type ? events.findIndex((event) => event.type === type) : 0;
+        if (index >= 0) {
+          const [event] = events.splice(index, 1);
+          return event as Record<string, unknown>;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`timed out for a ${type ?? 'any'} event; have ${JSON.stringify(events).slice(0, 160)}`);
+    }
+    return new Promise((resolve, reject) => {
+      socket.on('open', () => resolve({ socket, events, next }));
+      socket.on('error', reject);
+      setTimeout(() => reject(new Error('ws open timeout')), 8000);
+    });
+  }
+
+  it('authenticates, sends hello+presence, relays focus, and broadcasts comments/saves', async () => {
+    // Earlier tests may have narrowed membership; ensure viewer is a member again.
+    const list = await json<{ members: Array<{ subject: string; role: string }> }>(
+      '/api/models/sample-model/members',
+      { headers: admin },
+    );
+    if (!list.body.members.some((member) => member.subject === 'viewer')) {
+      const updated = await json<{ members: Array<{ subject: string }> }>('/api/models/sample-model/members', {
+        method: 'PUT',
+        headers: { ...admin, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          members: [
+            ...list.body.members,
+            { subject: 'viewer', role: 'viewer' },
+          ],
+          groupRoles: [],
+        }),
+      });
+      expect(updated.status).toBe(200);
+    }
+    const first = await connect('admin-token');
+    const hello = await first.next('hello');
+    expect(hello.you).toMatchObject({ subject: 'admin' });
+    expect(Array.isArray(hello.presence)).toBe(true);
+    // Consume our own join's presence broadcast before the second client connects.
+    await first.next('presence');
+
+    // A second member joining triggers a presence update for the first.
+    const second = await connect('viewer-token');
+    const presence = await first.next('presence');
+    const subjects = (presence.presence as Array<{ subject: string }>).map((p) => p.subject).sort();
+    expect(subjects).toEqual(['admin', 'viewer']);
+
+    // Focus awareness relays subject + element.
+    second.socket.send(JSON.stringify({ type: 'focus', elementId: 'elm-1' }));
+    const focus = await first.next('focus');
+    expect(focus).toMatchObject({ type: 'focus', subject: 'viewer', elementId: 'elm-1' });
+
+    // REST comment post broadcasts to both sockets.
+    await json('/api/models/sample-model/comments', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'live check', elementId: 'elm-1' }),
+    });
+    const live = await second.next('comment');
+    expect(live).toMatchObject({ type: 'comment' });
+    expect((live.comment as { body: string }).body).toBe('live check');
+
+    // Save (PUT) broadcasts a saved event with the new version.
+    const meta = await json<{ version: number }>('/api/models/sample-model/meta', { headers: admin });
+    const model = await json<Record<string, unknown>>('/api/models/sample-model', { headers: admin });
+    const saved = await json('/api/models/sample-model', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json', 'if-match': String(meta.body.version) },
+      body: JSON.stringify(model.body),
+    });
+    expect(saved.status).toBe(200);
+    const savedEvent = await second.next('saved');
+    expect(savedEvent.by).toBe('admin');
+
+    // Strangers are rejected at the websocket boundary.
+    const stranger = await connect('stranger-token');
+    let rejected = false;
+    await new Promise<void>((resolve) => {
+      const ws = stranger.socket as unknown as {
+        on: (event: string, handler: (code?: number) => void) => void;
+        close: (code?: number) => void;
+      };
+      ws.on('close', (code?: number) => {
+        rejected = code === 4403;
+        resolve();
+      });
+      setTimeout(resolve, 3000);
+    });
+    expect(rejected).toBe(true);
+    first.socket.close();
+    second.socket.close();
+  });
+});

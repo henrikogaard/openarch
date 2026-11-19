@@ -80,6 +80,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import GitConfigDialog, { type GitConfig } from './components/GitConfigDialog';
 import { ICON_PACKS } from './iconPacks';
 import { journalClear, journalRead, journalWrite } from './journal';
+import { getAccessToken, setAccessToken, useCollab } from './useCollab';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
 import ImportPreview from './components/ImportPreview';
@@ -258,6 +259,7 @@ export default function App() {
 
   const [gitConfig, setGitConfig] = useState<GitConfig | null>(null);
   const [gitDialogOpen, setGitDialogOpen] = useState(false);
+  const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
 
   const repository = useMemo<ModelRepository>(() => {
     if (mode === 'server') return new ServerRepository(apiUrl);
@@ -279,11 +281,26 @@ export default function App() {
   const changeMode = (next: Mode) => {
     setMode(next);
     if (next === 'git' && !gitConfig) setGitDialogOpen(true);
+    if (next === 'server' && !getAccessToken()) setTokenPromptOpen(true);
   };
 
   useEffect(() => {
     modelRef.current = model;
   }, [model]);
+
+  // Real-time collaboration (server mode): presence, focus, live notifications.
+  const collab = useCollab({
+    enabled: mode === 'server' && route === 'workspace' && !readOnly,
+    workspaceId: model?.id,
+    onEvent: (event) => {
+      if (event.type === 'comment') {
+        notify(`${event.comment.author} commented: “${event.comment.body.slice(0, 80)}”`);
+      }
+      if (event.type === 'saved' && event.by !== 'You') {
+        notify(`${event.by} saved revision v${event.version}${event.restore ? ' (restore)' : ''}`);
+      }
+    },
+  });
 
   const notify = useCallback((message: string) => {
     setStatus(message);
@@ -1494,7 +1511,34 @@ export default function App() {
           createSignal={createSignal}
           importSignal={importSignal}
         />
-        {shortcutHelpOpen && <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />}
+        {tokenPromptOpen && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Server access">
+            <div className="modal">
+              <header className="modal-header">
+                <h2>Server access (optional)</h2>
+                <button className="icon-button" onClick={() => setTokenPromptOpen(false)} aria-label="Close">×</button>
+              </header>
+              <div className="modal-body">
+                <p>
+                  If your server requires authentication, paste your access token. It identifies you to the
+                server (name shown to collaborators), is kept in this tab only (sessionStorage), and is
+                never written to disk. Leave empty for open servers.
+                </p>
+                <input
+                  className="form-input full"
+                  type="password"
+                  placeholder="Bearer token (static token, HS256 JWT, or OIDC token)"
+                  onChange={(event) => setAccessToken(event.target.value.trim() || undefined)}
+                />
+              </div>
+              <footer className="modal-footer">
+                <button onClick={() => setTokenPromptOpen(false)}>Continue</button>
+              </footer>
+            </div>
+          </div>
+        )}
+
+        {shortcutHelpOpen && <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />}", 1)
         {historyOpen && (
           <UndoTimeline
             entries={undoEntries}
@@ -1590,6 +1634,18 @@ export default function App() {
                 </span>
               )}
               <span className="status" title={status} aria-live="polite">{status}</span>
+              {mode === 'server' && route === 'workspace' && (
+                <span className="presence-strip" title={collab.status === 'live' ? 'Live collaboration connected' : collab.status}>
+                  {collab.status === 'live' ? '●' : '○'}
+                  {collab.presence.length > 1
+                    ? collab.presence
+                        .map((user) => user.displayName.split(' ')[0] + (user.focus ? ' (focus)' : ''))
+                        .join(', ')
+                    : collab.status === 'live'
+                      ? 'You'
+                      : collab.status}
+                </span>
+              )}
             </div>
           </header>
 

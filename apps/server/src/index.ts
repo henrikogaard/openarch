@@ -37,6 +37,13 @@ import {
   type Actor,
 } from './auth';
 import cors from '@fastify/cors';
+import websocket from '@fastify/websocket';
+import {
+  broadcastEvent,
+  joinRoom,
+  presenceOf,
+  reportFocus,
+} from './collab';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -278,6 +285,7 @@ const app = Fastify({ logger: true });
  * deployments, or "true" to restore the old reflect-anything behaviour.
  */
 const corsOriginSetting = process.env.OPENARCH_CORS_ORIGIN ?? '';
+await app.register(websocket);
 await app.register(cors, {
   // Default: allow same-origin requests plus any local dev loopback origin
   // (localhost/127.0.0.1 on any port) — the Vite dev server (:5173) and the
@@ -573,6 +581,12 @@ app.put('/api/models/:id', async (request, reply) => {
     `Saved revision ${workspace.version} (${model.elements.length} elements)`,
   );
   persistToDisk();
+  broadcastEvent(workspace.model.id, {
+    type: 'saved',
+    version: workspace.version,
+    by: actor.subject,
+    elementCount: model.elements.length,
+  });
   reply.header('x-model-version', String(workspace.version));
   return model;
 });
@@ -633,6 +647,7 @@ app.post('/api/models/:id/comments', async (request, reply) => {
     resolved: false,
   };
   workspace.comments.unshift(comment);
+  broadcastEvent(workspace.model.id, { type: 'comment', comment });
   audit(workspace, actor.subject, 'comment', 'Added a comment', comment.elementId);
   persistToDisk();
   return reply.code(201).send(comment);
@@ -714,6 +729,7 @@ app.post('/api/models/:id/snapshots/:snapshotId/restore', async (request, reply)
   workspace.updatedBy = actor.subject;
   audit(workspace, actor.subject, 'restore', `Restored ${snapshot.label} as revision ${workspace.version}`);
   persistToDisk();
+  broadcastEvent(workspace.model.id, { type: 'saved', version: workspace.version, by: actor.subject, restore: true });
   reply.header('x-model-version', String(workspace.version));
   return workspace.model;
 });
@@ -754,6 +770,55 @@ app.delete('/api/models/:id/saved-views/:viewId', async (request, reply) => {
 });
 
 // ── Members / RBAC ───────────────────────────────────────────────────────────
+
+
+// ── Real-time collaboration (presence/focus/comments — read-only relays) ────
+
+app.get('/api/models/:id/rt', { websocket: true }, (socket, request) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) {
+    socket.close(4404, 'Workspace not found');
+    return;
+  }
+  const header = request.headers.authorization;
+  const query = request.query as { token?: string };
+  const bearer = header?.startsWith('Bearer ') ? header.slice(7) : query.token;
+  const actor = resolveActor({
+    authorization: `Bearer ${bearer ?? ''}`,
+  });
+  if (!actor || !isMember(workspace.members, actor, undefined, workspace.groupRoles)) {
+    socket.close(4403, 'Not a workspace member');
+    return;
+  }
+  const handle = joinRoom({
+    workspace,
+    actor,
+    client: { send: (data) => socket.send(data), close: (code, reason) => socket.close(code, reason) },
+    onClose: () => socket.close(),
+  });
+  socket.on('message', (raw: Buffer) => {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(String(raw)) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (parsed.type === 'ping') {
+      socket.send(JSON.stringify({ type: 'pong' }));
+      return;
+    }
+    // Focus awareness only. Writes go through validated REST by design.
+    if (parsed.type === 'focus') {
+      const elementId = typeof parsed.elementId === 'string' ? parsed.elementId : null;
+      reportFocus(workspace, actor.subject, elementId);
+      return;
+    }
+    if (parsed.type === 'presence') {
+      socket.send(JSON.stringify({ type: 'presence', presence: presenceOf(workspace.model.id) }));
+    }
+  });
+  socket.on('close', () => handle.cleanup());
+});
 
 app.get('/api/models/:id/members', async (request, reply) => {
   const workspace = workspaces.get((request.params as { id: string }).id);

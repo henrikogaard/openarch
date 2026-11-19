@@ -10,8 +10,9 @@
   "dependencies": {
     "@fastify/cors": "^10.0.0",
     "@fastify/static": "^10.1.11",
-    "@openarch/core": "*",
+    "@fastify/websocket": "^11.3.7",
     "@openarch/ai": "*",
+    "@openarch/core": "*",
     "fastify": "^5.2.0"
   },
   "devDependencies": {

@@ -521,6 +521,37 @@ Everything else that was listed as "not built" is now built:
   validate/convert/doctor/.drawio against the artifact) + `npm pack` smoke (4-file tarball).
 - **OIDC live**: opt-in live-Keycloak verification test (skips without env).
 
+
+## 19. Real-time collaboration (2026-11-19) — awareness, not CRDT
+
+Why not CRDT (roadmap §14's original call): the model is a strongly constrained graph — every
+write must pass `validateModel` and views must stay faithful projections. CRDTs guarantee
+*convergence*, not *validity*: merging "delete element" with "edit its relationship" produces a
+dangling reference, and CRDTs have no reject-path. Layering validation over convergence (plus our
+undo stack, raw-XML passthrough, snapshot history) is where such projects go to die. Concurrent
+structural edits are genuinely rare in the target teams (2–10 people, sporadic edits) and are
+already resolved by optimistic locking + the three-way review.
+
+What shipped instead:
+
+1. **Identity**: the web app attaches a per-tab access token (sessionStorage; prompt on first
+   server-mode switch) to every REST call — static tokens, HS256 JWTs, and OIDC-issued tokens
+   all work; the token maps to the member's subject for presence display.
+2. **Real-time hub** (`apps/server/src/collab.ts` + `GET /api/models/:id/rt` WebSocket):
+   authenticated (member-checked), per-workspace rooms providing:
+   - **Presence**: who has the workspace open (join/leave/live badge in the top bar).
+   - **Focus awareness**: "who is looking at what element", relayed from canvas selection.
+   - **Live comments**: comment posts broadcast to everyone in the room.
+   - **Save notifications**: revision bumps / restores by *other* members surface instantly
+     (before their next save hits the 409 path).
+   All writes still go through the validated REST path — the socket is a read-only relay by
+   design (invariant 6 untouched). Stranger connections are closed with 4403.
+3. **Integration tests** cover the full flow: two authenticated sockets, presence updates,
+   focus relay, comment + save broadcasts, and non-member rejection.
+
+If concurrent *field-level* co-editing ever becomes a real need, the staged path is: (1) prove
+this awareness layer insufficient for actual team workflows, (2) design an OT (server-authoritative
+operation log) layer that validates every operation — a CRDT remains the wrong tool here.
 ## 16. Immediate backlog
 
 | Order | Item | Phase | Status |

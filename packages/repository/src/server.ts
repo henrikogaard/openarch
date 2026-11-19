@@ -10,13 +10,45 @@ export interface ModelMeta {
 }
 
 /** Talks to the optional self-hosted server; same contract as LocalRepository. */
+/**
+ * The access token identifies the user to the server (static tokens, HS256
+ * JWTs, or OIDC-issued tokens). Kept in sessionStorage — per tab, cleared on
+ * close, never persisted to disk.
+ */
+const ACCESS_TOKEN_KEY = 'openarch-access-token';
+export function getAccessToken(): string | undefined {
+  try {
+    return sessionStorage.getItem(ACCESS_TOKEN_KEY) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function setAccessToken(token: string | undefined): void {
+  try {
+    if (token) sessionStorage.setItem(ACCESS_TOKEN_KEY, token);
+    else sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+  } catch {
+    // Private-mode browsers: degrade to anonymous access.
+  }
+}
+
 export class ServerRepository implements ModelRepository {
   constructor(private readonly baseUrl = 'http://localhost:8080/api') {}
 
+  private authHeaders(): Record<string, string> {
+    const token = getAccessToken();
+    return token ? { authorization: `Bearer ${token}` } : {};
+  }
+
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    const headers = {
+      ...this.authHeaders(),
+      ...(init?.headers as Record<string, string> | undefined),
+    };
     const response = await fetch(`${this.baseUrl}${path}`, {
       signal: AbortSignal.timeout(15000),
       ...init,
+      headers,
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as {
@@ -68,7 +100,9 @@ export class ServerRepository implements ModelRepository {
   }
 
   async getModel(id: string): Promise<Model | undefined> {
-    const response = await fetch(`${this.baseUrl}/models/${encodeURIComponent(id)}`);
+    const response = await fetch(`${this.baseUrl}/models/${encodeURIComponent(id)}`, {
+      headers: this.authHeaders(),
+    });
     if (response.status === 404) return undefined;
     if (!response.ok) throw new Error(`Server request failed: ${response.status}`);
     return (await response.json()) as Model;
