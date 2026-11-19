@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import {
+  diffModels as canonicalDiffModels,
+  diffSummary,
   type Model,
   parseAoef,
   primaryText,
@@ -12,7 +14,9 @@ import { exportElementsCsv, exportMermaid } from '@openarch/exporters';
 import { exportArchi, importArchi } from '@openarch/archi';
 import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
 import { checkRules, exportWorkspaceMarkdown, parseRules } from '@openarch/reporting';
-import { diffModels } from './diff';
+// Reuse the single canonical diff implementation (core) — a private CLI
+// duplicate drifted from the server/web semantics.
+
 
 type Format = 'xml' | 'json' | 'csv' | 'mermaid' | 'dsl';
 
@@ -271,7 +275,7 @@ async function report(filePath: string, output: string): Promise<number> {
 
 async function diff(aPath: string, bPath: string): Promise<number> {
   const [a, b] = await Promise.all([readModelFile(aPath), readModelFile(bPath)]);
-  const diff = diffModels(a, b);
+  const diff = canonicalDiffModels(a, b);
 
   console.log(`Comparing ${aPath} -> ${bPath}`);
   console.log('');
@@ -281,7 +285,10 @@ async function diff(aPath: string, bPath: string): Promise<number> {
     diff.removedElements.length === 0 &&
     diff.changedElements.length === 0 &&
     diff.addedRelationships.length === 0 &&
-    diff.removedRelationships.length === 0
+    diff.removedRelationships.length === 0 &&
+    diff.changedRelationships.length === 0 &&
+    diff.addedViews.length === 0 &&
+    diff.removedViews.length === 0
   ) {
     console.log('No differences found.');
     return 0;
@@ -296,26 +303,34 @@ async function diff(aPath: string, bPath: string): Promise<number> {
     for (const element of diff.addedElements) console.log(`  + ${element}`);
     for (const element of diff.removedElements) console.log(`  - ${element}`);
     for (const change of diff.changedElements) {
-      console.log(`  ~ ${change.id} ${change.field}: "${change.from}" -> "${change.to}"`);
+      const id = change.entityId;
+      console.log(`  ~ ${id} ${change.field} changed`);
     }
     console.log('');
   }
 
-  if (diff.addedRelationships.length || diff.removedRelationships.length) {
+  if (
+    diff.addedRelationships.length ||
+    diff.removedRelationships.length ||
+    diff.changedRelationships.length
+  ) {
     console.log('Relationships:');
     for (const relationship of diff.addedRelationships) console.log(`  + ${relationship}`);
     for (const relationship of diff.removedRelationships) console.log(`  - ${relationship}`);
+    for (const change of diff.changedRelationships) {
+      console.log(`  ~ ${change.entityId} ${change.field} changed`);
+    }
     console.log('');
   }
 
-  console.log(
-    'Summary: ' +
-      `${diff.addedElements.length} element(s) added, ` +
-      `${diff.removedElements.length} element(s) removed, ` +
-      `${diff.changedElements.length} element(s) changed, ` +
-      `${diff.addedRelationships.length} relationship(s) added, ` +
-      `${diff.removedRelationships.length} relationship(s) removed.`,
-  );
+  if (diff.addedViews.length || diff.removedViews.length) {
+    console.log('Views:');
+    for (const view of diff.addedViews) console.log(`  + ${view}`);
+    for (const view of diff.removedViews) console.log(`  - ${view}`);
+    console.log('');
+  }
+
+  console.log(`Summary: ${diffSummary(diff)}`);
   return 0;
 }
 
@@ -327,10 +342,10 @@ function doctor(): number {
   console.log(`  CLI version:   0.1.0`);
   console.log('');
   console.log('Loaded model capability:');
-  console.log('  Read:    AOEF XML (.xml), native JSON (.json)');
-  console.log('  Write:   AOEF XML (.xml), native JSON (.json)');
-  console.log('  Export:  elements CSV (.csv), Mermaid (.mermaid), SVG (via @openarch/exporters)');
-  console.log('  Analyze: structural validation, model diff');
+  console.log('  Read:    AOEF XML (.xml), native JSON (.json), Archi .archimate (.archimate), C4 DSL (.dsl)');
+  console.log('  Write:   AOEF XML (.xml), native JSON (.json), Archi .archimate (.archimate), C4 DSL (.dsl)');
+  console.log('  Export:  elements CSV (.csv), Mermaid (.mermaid)');
+  console.log('  Analyze: structural validation, model diff (same core diff as server/web)');
   console.log('');
   console.log('ArchiMate® is a registered trademark of The Open Group.');
   return 0;
