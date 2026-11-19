@@ -9,12 +9,16 @@ export default defineConfig({
     chunkSizeWarningLimit: 750,
     rollupOptions: {
       output: {
-        // One vendor chunk (splitting further creates circular-chunk warnings
-        // via zustand/react-is); lazy tabs (AI, enrichment/IaC) still split
-        // into their own async chunks via React.lazy.
+        // Split heavyweight office dependencies (docx/pptxgenjs are several
+        // MBs and only used by manual exports) plus any other unused-on-load
+        // library out of the initial vendor chunk; UI tabs stay in vendor.
         manualChunks(id) {
-          if (id.includes('node_modules')) return 'vendor';
-          return undefined;
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('docx') || id.includes('pptxgenjs') || id.includes('jszip')) {
+            return 'office';
+          }
+          if (id.includes('@xyflow') || id.includes('zustand')) return 'flow';
+          return 'vendor';
         },
       },
     },

@@ -62,7 +62,10 @@ import {
 import { exportArchi, importArchi } from '@openarch/archi';
 import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
 import { publishToConfluence, type ConnectorConfig } from '@openarch/connectors';
-import { exportViewsPptx, exportWorkspaceDocx, exportWorkspaceMarkdown } from '@openarch/reporting';
+// Heavy office/report exporters are loaded on demand so the entry bundle
+// stays small (they pull pptxgenjs and docx — nearly a megabyte of JS).
+type ReportingModule = typeof import('@openarch/reporting');
+const loadReporting = (): Promise<ReportingModule> => import('@openarch/reporting');
 import { LanguageContext, type Language, useTranslation } from './i18n';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Artefacts from './components/Artefacts';
@@ -127,6 +130,14 @@ function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'model';
 }
 
+/** Union two id-keyed arrays; the incoming entries replace same-id ones. */
+function upstreamById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+  if (!incoming.length) return existing;
+  const byId = new Map(existing.map((item) => [item.id, item]));
+  for (const item of incoming) byId.set(item.id, item);
+  return [...byId.values()];
+}
+
 function downloadFile(name: string, content: string | Blob, type: string): void {
   const blob = typeof content === 'string' ? new Blob([content], { type }) : content;
   const url = URL.createObjectURL(blob);
@@ -134,7 +145,8 @@ function downloadFile(name: string, content: string | Blob, type: string): void 
   anchor.href = url;
   anchor.download = name;
   anchor.click();
-  URL.revokeObjectURL(url);
+  // Revoking synchronously can cancel in-flight downloads in some engines.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function hasShareHash(): boolean {
@@ -199,7 +211,7 @@ export default function App() {
       return;
     }
     try {
-      const { exportWorkspaceHtml } = await import('@openarch/reporting');
+      const { exportWorkspaceHtml } = await loadReporting();
       const pageId = await publishToConfluence(
         { ...connectors, confluenceSpaceKey: connectors.confluenceSpaceKey },
         `${primaryText(model.name)} — ${primaryText(currentView.name)}`,
@@ -219,6 +231,7 @@ export default function App() {
     localStorage.setItem('openarch-theme', theme);
   }, [theme]);
   const modelRef = useRef<Model | null>(null);
+  const savedModelRef = useRef<Model | null>(null);
   const clipboardRef = useRef<string[]>([]);
   const [clipboardCount, setClipboardCount] = useState(0);
   const pasteCountRef = useRef(0);
@@ -260,12 +273,15 @@ export default function App() {
   const commit = useCallback((updater: (current: Model) => Model) => {
     const current = modelRef.current;
     if (!current) return;
+    const next = updater(current);
     setPast((history) => [...history, current].slice(-60));
     setFuture([]);
-    const next = updater(current);
     modelRef.current = next;
     setModel(next);
-    setDirty(true);
+    // No spurious dirty/undo entries for no-op helpers: same reference means
+    // nothing changed (align/distribute etc. return the model unchanged when
+    // a guard rejects, e.g. middle node ignored).
+    if (next !== current) setDirty(true);
   }, []);
 
   const undo = useCallback(() => {
@@ -276,7 +292,9 @@ export default function App() {
     setFuture((history) => [current, ...history].slice(0, 60));
     modelRef.current = previous;
     setModel(previous);
-    setDirty(true);
+    // Only mark dirty when the restored state actually differs from the
+    // last saved reference — undoing to the saved state is not a change.
+    setDirty(previous !== savedModelRef.current);
   }, [past]);
 
   const redo = useCallback(() => {
@@ -287,7 +305,7 @@ export default function App() {
     setPast((history) => [...history, current].slice(-60));
     modelRef.current = next;
     setModel(next);
-    setDirty(true);
+    setDirty(next !== savedModelRef.current);
   }, [future]);
 
   // Report canvas selection up with a reference-stable update: re-rendering App
@@ -468,6 +486,7 @@ export default function App() {
     setReadOnly(false);
     setDirty(false);
     setLastSavedAt(next.updatedAt ?? null);
+    savedModelRef.current = next;
     setSelectedNodeIds([]);
     clipboardRef.current = [];
     setClipboardCount(0);
@@ -487,6 +506,7 @@ export default function App() {
     setPendingImport(null);
     setDirty(false);
     setLastSavedAt(null);
+    savedModelRef.current = null;
     window.history.replaceState(null, '', window.location.pathname);
     void refreshWorkspaces();
   };
@@ -526,8 +546,13 @@ export default function App() {
       for (const raw of models) {
         // Round-trip through the native parser so migration + validation run.
         const model = parseNativeModel(JSON.stringify(raw));
-        const toSave = existing.has(model.id) ? { ...model, id: `model-${crypto.randomUUID()}` } : model;
-        await repository.saveModel(toSave);
+        // Duplicate ids within one archive must not overwrite each other.
+        let toSave = model.id;
+        if (existing.has(toSave)) {
+          toSave = `model-${crypto.randomUUID()}`;
+        }
+        existing.add(toSave);
+        await repository.saveModel(toSave === model.id ? model : { ...model, id: toSave });
         count += 1;
       }
       await refreshWorkspaces();
@@ -582,14 +607,20 @@ export default function App() {
 
   const save = useCallback(
     async (options: { silent?: boolean; forceVersion?: number } = {}) => {
+      const savedId = modelRef.current?.id;
       const current = modelRef.current;
       if (!current || readOnly) return;
       try {
         await repository.saveModel(current, options.forceVersion ?? modelVersion);
         await syncVersion(current.id);
         await refreshWorkspaces();
-        setDirty(false);
-        setLastSavedAt(new Date().toISOString());
+        // Only update save-state if we are still on the same workspace —
+        // an in-flight save must never clear a DIFFERENT workspace's flags.
+        if (modelRef.current?.id === savedId) {
+          setDirty(false);
+          setLastSavedAt(new Date().toISOString());
+          savedModelRef.current = current;
+        }
         if (!options.silent) {
           const errors = validateModel(current).filter((issue) => issue.severity === 'error').length;
           notify(
@@ -612,13 +643,19 @@ export default function App() {
     [readOnly, repository, modelVersion, syncVersion, refreshWorkspaces, notify],
   );
 
-  // Autosave: debounced save a moment after the last edit, so a crash or a
-  // closed tab no longer loses work.
+  // Autosave: debounced save a moment after the last edit, with a maximum
+  // delay (15 s from the FIRST unsaved edit) so continuous editing cannot
+  // postpone saves forever. The per-edit debounce stays 1.5 s.
+  const autosaveSinceRef = useRef(0);
   useEffect(() => {
     if (!dirty || readOnly || !modelRef.current) return;
+    if (!autosaveSinceRef.current) autosaveSinceRef.current = Date.now();
+    const elapsed = Date.now() - autosaveSinceRef.current;
+    const delay = elapsed >= 15000 ? 1 : Math.min(1500, 15000 - elapsed);
     const timer = window.setTimeout(() => {
+      autosaveSinceRef.current = 0;
       void save({ silent: true });
-    }, 1500);
+    }, delay);
     return () => window.clearTimeout(timer);
   }, [dirty, model, readOnly, save]);
 
@@ -797,8 +834,9 @@ export default function App() {
     notify('Exported C4/Structurizr DSL');
   };
 
-  const exportReport = () => {
+  const exportReport = async () => {
     if (!model) return;
+    const { exportWorkspaceMarkdown } = await loadReporting();
     downloadFile(
       `${slug(primaryText(model.name))}-report.md`,
       exportWorkspaceMarkdown(model),
@@ -809,6 +847,7 @@ export default function App() {
 
   const exportDocx = async () => {
     if (!model) return;
+    const { exportWorkspaceDocx } = await loadReporting();
     const bytes = await exportWorkspaceDocx(model);
     downloadFile(
       `${slug(primaryText(model.name))}-report.docx`,
@@ -822,6 +861,7 @@ export default function App() {
 
   const exportPptx = async () => {
     if (!model) return;
+    const { exportViewsPptx } = await loadReporting();
     const bytes = await exportViewsPptx(model);
     downloadFile(
       `${slug(primaryText(model.name))}-views.pptx`,
@@ -950,7 +990,16 @@ export default function App() {
     commit((model) => ({
       ...model,
       elements: model.elements.map((element) =>
-        element.id === id ? { ...element, name: [{ lang: 'en', value: name }] } : element,
+        // Replace only the English entry — other locales survive.
+        element.id === id
+          ? {
+              ...element,
+              name: [
+                { lang: 'en', value: name },
+                ...element.name.filter((text) => text.lang !== 'en'),
+              ],
+            }
+          : element,
       ),
     }));
   };
@@ -1171,7 +1220,15 @@ export default function App() {
     commit((current) => ({
       ...current,
       views: current.views.map((item, i) =>
-        i === index ? { ...item, name: [{ lang: 'en', value: name }] } : item,
+        i === index
+          ? {
+              ...item,
+              name: [
+                { lang: 'en', value: name },
+                ...item.name.filter((text) => text.lang !== 'en'),
+              ],
+            }
+          : item,
       ),
     }));
   };
@@ -1202,7 +1259,10 @@ export default function App() {
   };
 
   // ⌘K palette: workspaces, views, elements of the open model, and actions.
-  const commands: CommandItem[] = [
+  // Memoised so ⌘K keystrokes don't rebuild the whole array per render;
+  // cross-workspace items are capped (a huge portfolio must not freeze the UI).
+  const commands: CommandItem[] = useMemo(() => {
+    return [
     { id: 'cmd-home', group: 'Navigate', label: 'Go to workspace list', run: () => goHome() },
     { id: 'cmd-portfolio', group: 'Navigate', label: 'Open portfolio', run: () => void openPortfolio() },
     { id: 'cmd-save', group: 'Actions', label: 'Save workspace', keywords: 'save persist', run: () => void save() },
@@ -1249,6 +1309,7 @@ export default function App() {
     // Cross-workspace search: elements from every other workspace.
     ...(allModels ?? [])
       .filter((candidate) => candidate.id !== model?.id)
+      .slice(0, 100)
       .flatMap((workspace) =>
         workspace.elements.map((element) => ({
           id: `ws-${workspace.id}-el-${element.id}`,
@@ -1264,6 +1325,8 @@ export default function App() {
         })),
       ),
   ];
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers are stable or defined above; rebuilding on model/workspaces changes is intended
+  }, [workspaces, model, allModels, theme, goHome, save, exportAoef, exportJson, exportSvg, exportPng, exportCsv, share, setPresenting, openWorkspace, openPortfolio]);
 
   const selectedElement = model?.elements.find((element) => element.id === selectedElementId);
   const primaryTabs = PRIMARY_TABS;
@@ -1294,6 +1357,7 @@ export default function App() {
       onUngroup={ungroupSelection}
       onZOrder={zOrder}
       snapToGrid={snapToGrid}
+      presenting={presenting}
       fitSignal={presenting ? 1 : 0}
       colorMode={theme}
       iconPack={iconPack}
@@ -1609,8 +1673,10 @@ export default function App() {
                     onApply={(elements, relationships) => {
                       commit((current) => ({
                         ...current,
-                        elements: [...current.elements, ...elements],
-                        relationships: [...current.relationships, ...relationships],
+                        // Upsert by id instead of blind append — re-applying
+                        // an import twice must not duplicate ids.
+                        elements: upstreamById(current.elements, elements),
+                        relationships: upstreamById(current.relationships, relationships),
                       }));
                       notify(`Added ${elements.length} enriched elements — remember to save`);
                     }}
@@ -1672,6 +1738,7 @@ export default function App() {
                   repository={repository instanceof ServerRepository ? repository : null}
                   onRestore={(restored) => {
                     commit(() => restored);
+                    savedModelRef.current = restored;
                     setDirty(false);
                     void syncVersion(restored.id);
                     notify('Snapshot restored');

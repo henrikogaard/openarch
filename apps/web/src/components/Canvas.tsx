@@ -314,6 +314,8 @@ interface CanvasProps {
   fitSignal: number;
   colorMode: 'light' | 'dark';
   iconPack: string;
+  /** True inside presentation mode: the canvas becomes read-only. */
+  presenting?: boolean;
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void;
   onRenameElement: (elementId: string, name: string) => void;
   onDuplicateNodes: (nodeIds: string[]) => void;
@@ -356,6 +358,7 @@ function CanvasFlow({
   fitSignal,
   colorMode,
   iconPack,
+  presenting = false,
   onSelectionChange,
   onRenameElement,
   onDuplicateNodes,
@@ -449,11 +452,16 @@ function CanvasFlow({
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        deleteKeyCode={['Backspace', 'Delete']}
+        deleteKeyCode={presenting ? [] : ['Backspace', 'Delete']}
+        // Presentation mode makes the canvas read-only view: no dragging,
+        // connecting, reconnecting, or selection editing.
+        nodesDraggable={!presenting}
+        nodesConnectable={!presenting}
+        edgesReconnectable={!presenting}
+        elementsSelectable={!presenting}
         multiSelectionKeyCode="Shift"
         snapToGrid={snapToGrid}
         snapGrid={[20, 20]}
-        edgesReconnectable
         onReconnect={(oldEdge, newConnection) => {
           if (newConnection.source && newConnection.target) {
             onReconnectEdge(oldEdge.id, newConnection.source, newConnection.target);
