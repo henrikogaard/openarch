@@ -120,6 +120,7 @@ function verifyRs256(
   try {
     const payload = JSON.parse(base64UrlDecode(payloadPart)) as Record<string, unknown>;
     if (typeof payload.exp === 'number' && payload.exp * 1000 < now) return undefined;
+    if (typeof payload.nbf === 'number' && payload.nbf * 1000 > now) return undefined;
     if (config.oidcAudience) {
       const audience = payload.aud;
       const audiences = Array.isArray(audience) ? audience : [audience];
@@ -161,6 +162,7 @@ export function verifyJwt(
   try {
     const payload = JSON.parse(base64UrlDecode(payloadPart)) as Record<string, unknown>;
     if (typeof payload.exp === 'number' && payload.exp * 1000 < now) return undefined;
+    if (typeof payload.nbf === 'number' && payload.nbf * 1000 > now) return undefined;
     return payload;
   } catch {
     return undefined;

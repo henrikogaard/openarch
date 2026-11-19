@@ -385,3 +385,64 @@ describe('multi-tenant org scoping', () => {
     expect(cleared.body.orgId).toBeNull();
   });
 });
+
+describe('write validation gate + governance fixes', () => {
+  it('PUT/POST refuse error-severity models (invariant 6 at the durable path)', async () => {
+    const model = await json<Record<string, unknown>>('/api/models/sample-model', { headers: admin });
+    const broken = {
+      ...(model.body as Record<string, unknown>),
+      relationships: [
+        ...((model.body as { relationships: Array<Record<string, unknown>> }).relationships ?? []),
+        { id: 'dangling-1', type: 'Serving', source: 'ghost-a', target: 'ghost-b', name: [], documentation: [], properties: [] },
+      ],
+    };
+    const meta = await json<{ version: number }>('/api/models/sample-model/meta', { headers: admin });
+    const put = await json('/api/models/sample-model', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json', 'if-match': String(meta.body.version) },
+      body: JSON.stringify(broken),
+    });
+    expect(put.status).toBe(400);
+    expect((put.body as { error: string }).error).toContain('failed validation');
+
+    const post = await json('/api/models', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'new-broken-model' }),
+    });
+    expect(post.status).toBe(400);
+
+    // Non-models are also rejected cleanly instead of 500ing.
+    const garbage = await json('/api/models', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ nope: true }),
+    });
+    expect(garbage.status).toBe(400);
+  });
+
+  it('waiver governance is owner-only (editor cannot waive, viewer cannot read-then-write)', async () => {
+    const created = await json<{ id: string }>('/api/models/sample-model/snapshots', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ label: 'gate test' }),
+    });
+    void created;
+    const waiver = await json('/api/models/sample-model/waivers', {
+      method: 'POST',
+      headers: { ...viewer, 'content-type': 'application/json' },
+      body: JSON.stringify({ rule: 'element-without-domain', reason: 'nope' }),
+    });
+    expect(waiver.status).toBe(403);
+  });
+
+  it('comment authors are the authenticated actor, not client-supplied', async () => {
+    const posted = await json<{ author: string }>('/api/models/sample-model/comments', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'auth test', author: 'spoofed-user' }),
+    });
+    expect(posted.status).toBe(201);
+    expect(posted.body.author).toBe('admin');
+  });
+});

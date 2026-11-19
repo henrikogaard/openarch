@@ -3,21 +3,25 @@ import {
   diffModels,
   parseAoef,
   primaryText,
+  validateModel,
+  type ArchiElement,
   type AuditEvent,
   type Comment,
   type Model,
+  type Relationship,
   type SavedView,
+  type View,
+  type Waiver,
   type WorkspaceMember,
 } from '@openarch/core';
-import { diffSummary, type ModelDiff } from '@openarch/core';
-import { modelToMarkdown, validateAiModel } from '@openarch/ai';
+import { diffSummary, mergeModels, type ModelDiff } from '@openarch/core';
+import { modelToMarkdown, sanitizeAiText, validateAiModel } from '@openarch/ai';
 import {
   ELEMENT_TYPES,
   portfolioStats,
   RELATIONSHIP_TYPES,
   VIEWPOINTS,
   workspaceSummary,
-  type Waiver,
 } from '@openarch/core';
 import { MemoryRepository, parseNativeModel } from '@openarch/repository';
 import {
@@ -33,7 +37,8 @@ import {
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { timingSafeEqual } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -78,6 +83,39 @@ interface ScimUser {
   meta: { created: string; lastModified: string };
 }
 
+/**
+ * Model-shape check + the same structural validation every other write path
+ * runs (invariant 6: AI writes, HTTP clients, and the web app all go through
+ * the same gate — the server is the durable enforcement point).
+ * Returns a 400-friendly error string, or undefined when the model is valid.
+ */
+function modelWriteProblem(value: unknown): string | undefined {
+  const candidate = value as Partial<Model> | null;
+  if (!candidate || typeof candidate !== 'object' || typeof candidate.id !== 'string' || !candidate.id.trim()) {
+    return 'Not an OpenArch model (an id is required)';
+  }
+  if (
+    !Array.isArray(candidate.elements) ||
+    !Array.isArray(candidate.relationships) ||
+    !Array.isArray(candidate.views)
+  ) {
+    return 'Not an OpenArch model (elements/relationships/views must be arrays)';
+  }
+  const errors = validateModel({
+    ...(candidate as Model),
+    name: (candidate as Model).name ?? [],
+    documentation: (candidate as Model).documentation ?? [],
+    properties: (candidate as Model).properties ?? [],
+    propertyDefinitions: (candidate as Model).propertyDefinitions ?? [],
+    domains: (candidate as Model).domains ?? [],
+  }).filter((issue) => issue.severity === 'error');
+  if (errors.length) {
+    return `Model failed validation with ${errors.length} error(s): ${errors.slice(0, 3).map((issue) => issue.message).join('; ')}`;
+  }
+  return undefined;
+}
+
+
 const scimToken = process.env.OPENARCH_SCIM_TOKEN;
 const scimFile = dataFile.replace(/\.json$/, '') + '.users.json';
 const scimUsers = new Map<string, ScimUser>();
@@ -96,7 +134,16 @@ loadScimUsers();
 
 function requireScim(request: FastifyRequest, reply: FastifyReply): boolean {
   const header = request.headers.authorization ?? '';
-  if (!scimToken || header !== `Bearer ${scimToken}`) {
+  if (!scimToken || !header.startsWith('Bearer ')) {
+    void reply.code(401).header('www-authenticate', 'Bearer').send({ error: 'SCIM token required' });
+    return false;
+  }
+  // Constant-time comparison — the token is a long-lived secret.
+  const presented = Buffer.from(header.slice(7));
+  const expected = Buffer.from(scimToken);
+  const valid =
+    presented.length === expected.length && timingSafeEqual(presented, expected);
+  if (!valid) {
     void reply.code(401).header('www-authenticate', 'Bearer').send({ error: 'SCIM token required' });
     return false;
   }
@@ -158,10 +205,27 @@ function loadFromDisk(): void {
     loadFromDiskSeed();
     return;
   }
-  const stored = JSON.parse(readFileSync(dataFile, 'utf-8')) as
-    | Workspace[]
-    | Record<string, Workspace>
-    | Model[];
+  let raw: string;
+  try {
+    raw = readFileSync(dataFile, 'utf-8');
+  } catch {
+    loadFromDiskSeed();
+    return;
+  }
+  let stored: Workspace[] | Record<string, Workspace> | Model[] | undefined;
+  try {
+    stored = JSON.parse(raw) as Workspace[] | Record<string, Workspace> | Model[];
+  } catch (error) {
+    // Never brick the server on a corrupt file: quarantine it and start
+    // fresh so operators can recover data from the backup copy.
+    const corrupt = `${dataFile}.corrupt-${Date.now()}`;
+    renameSync(dataFile, corrupt);
+    console.error(
+      `OpenArch: data file was corrupt; moved to ${corrupt} (${error instanceof Error ? error.message : String(error)}). Starting fresh.`,
+    );
+    loadFromDiskSeed();
+    return;
+  }
   const list = Array.isArray(stored) ? stored : Object.values(stored);
   for (const entry of list) {
     const maybeWorkspace = entry as Partial<Workspace> & Partial<Model>;
@@ -192,13 +256,32 @@ function loadFromDisk(): void {
 
 function persistToDisk(): void {
   mkdirSync(dirname(dataFile), { recursive: true });
-  writeFileSync(dataFile, `${JSON.stringify([...workspaces.values()], null, 2)}\n`);
+  // Atomic persistence: write a temp file, then rename over the target — a
+  // crash mid-write can no longer corrupt the only copy of all workspaces.
+  const tempFile = `${dataFile}.tmp-${process.pid}`;
+  writeFileSync(tempFile, `${JSON.stringify([...workspaces.values()], null, 2)}\n`);
+  renameSync(tempFile, dataFile);
 }
 
 loadFromDisk();
 
 const app = Fastify({ logger: true });
-await app.register(cors, { origin: true });
+/**
+ * CORS origins: defaults to the local dev servers only — reflecting arbitrary
+ * origins lets any visited website read and mutate a self-hosted instance
+ * from the victim's browser. Set OPENARCH_CORS_ORIGIN to a comma-separated
+ * list ("https://arch.example.com,https://ea.example.com") for real
+ * deployments, or "true" to restore the old reflect-anything behaviour.
+ */
+const corsOriginSetting = process.env.OPENARCH_CORS_ORIGIN ?? 'http://localhost:5173,http://127.0.0.1:5173';
+const corsOrigin =
+  corsOriginSetting === 'true'
+    ? true
+    : corsOriginSetting
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+await app.register(cors, { origin: corsOrigin });
 if (existsSync(webDist)) {
   await app.register(fastifyStatic, { root: webDist, prefix: '/', decorateReply: true });
 }
@@ -266,9 +349,8 @@ function requireRole(
 }
 
 app.get('/health', async () => ({
+  // No counts, no mode: an unauthenticated endpoint gives away nothing.
   status: 'ok',
-  workspaces: workspaces.size,
-  auth: authConfig.required ? 'required' : 'open',
 }));
 
 app.get('/api/me', async (request, reply) => {
@@ -382,7 +464,8 @@ app.post('/api/models', async (request, reply) => {
   const actor = requireActor(request, reply);
   if (!actor) return;
   const model = request.body as Model;
-  if (!model?.id) return reply.code(400).send({ error: 'Model id is required' });
+  const problem = modelWriteProblem(model);
+  if (problem) return reply.code(400).send({ error: problem });
   if (workspaces.has(model.id)) return reply.code(409).send({ error: 'Workspace already exists' });
   const workspace: Workspace = {
     model,
@@ -417,7 +500,10 @@ app.put('/api/models/:id', async (request, reply) => {
     });
   }
   const model = { ...(request.body as Model), id };
-  const changeCount = diffModels(workspace.model, model);
+  // Invariant 6 enforcement at the durable write path: refuse error-severity
+  // models no matter which client (web, MCP, curl) sends them.
+  const problem = modelWriteProblem(model);
+  if (problem) return reply.code(400).send({ error: problem });
   workspace.model = model;
   workspace.version += 1;
   workspace.updatedAt = new Date().toISOString();
@@ -440,7 +526,6 @@ app.put('/api/models/:id', async (request, reply) => {
     'update',
     `Saved revision ${workspace.version} (${model.elements.length} elements)`,
   );
-  void changeCount;
   persistToDisk();
   reply.header('x-model-version', String(workspace.version));
   return model;
@@ -466,6 +551,9 @@ app.get('/api/models/:id/diff', async (request, reply) => {
   if (compare) {
     const other = workspaces.get(compare);
     if (!other) return reply.code(404).send({ error: 'Comparison workspace not found' });
+    // The comparison target is just as sensitive as the primary — check
+    // membership on both sides rather than leaking a non-member workspace.
+    if (!requireMember(request, reply, other)) return;
     return diffModels(other.model, workspace.model);
   }
   const snapshot = workspace.snapshots.at(-1);
@@ -485,19 +573,21 @@ app.post('/api/models/:id/comments', async (request, reply) => {
   if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
   const actor = requireRole(request, reply, workspace, ['owner', 'editor']);
   if (!actor) return;
-  const body = request.body as { body?: string; elementId?: string; author?: string };
+  const body = request.body as { body?: string; elementId?: string };
   if (!body?.body?.trim()) return reply.code(400).send({ error: 'Comment body is required' });
   const comment: Comment = {
     id: `comment-${crypto.randomUUID()}`,
     modelId: workspace.model.id,
     elementId: body.elementId,
-    author: body.author || actor.subject,
+    // The author is ALWAYS the authenticated actor — a client-supplied name
+    // must never be able to forge audit actors.
+    author: actor.subject,
     body: body.body.trim(),
     createdAt: new Date().toISOString(),
     resolved: false,
   };
   workspace.comments.unshift(comment);
-  audit(workspace, comment.author, 'comment', 'Added a comment', comment.elementId);
+  audit(workspace, actor.subject, 'comment', 'Added a comment', comment.elementId);
   persistToDisk();
   return reply.code(201).send(comment);
 });
@@ -530,6 +620,10 @@ app.post('/api/models/:id/snapshots', async (request, reply) => {
     model: structuredClone(workspace.model),
   };
   workspace.snapshots.push(snapshot);
+  // Same rolling cap as save revisions — snapshots are full model clones.
+  if (workspace.snapshots.length > 50) {
+    workspace.snapshots.splice(0, workspace.snapshots.length - 50);
+  }
   audit(workspace, actor.subject, 'create', `Created snapshot ${snapshot.label}`);
   persistToDisk();
   const { model: _model, ...metadata } = snapshot;
@@ -554,6 +648,19 @@ app.post('/api/models/:id/snapshots/:snapshotId/restore', async (request, reply)
   if (!actor) return;
   const snapshot = workspace.snapshots.find((candidate) => candidate.id === snapshotId);
   if (!snapshot) return reply.code(404).send({ error: 'Snapshot not found' });
+  // Snapshot the in-flight revision first — restore being a destructive
+  // decision must stay reversible like every other write.
+  workspace.snapshots ??= [];
+  workspace.snapshots.push({
+    id: `snapshot-${crypto.randomUUID()}`,
+    version: workspace.version,
+    createdAt: new Date().toISOString(),
+    label: `Pre-restore revision ${workspace.version}`,
+    model: structuredClone(workspace.model),
+  });
+  if (workspace.snapshots.length > 50) {
+    workspace.snapshots.splice(0, workspace.snapshots.length - 50);
+  }
   workspace.model = structuredClone(snapshot.model);
   workspace.model.id = id;
   workspace.version += 1;
@@ -681,13 +788,15 @@ app.post('/api/models/:id/import/apply', async (request, reply) => {
     const incoming = parseImport(request.body);
     const body = request.body as { mode?: 'replace' | 'merge' };
     const mode = body?.mode === 'merge' ? 'merge' : 'replace';
+    // Merge goes through the same core helper the web app uses — including
+    // view merging and integrity pruning — instead of a hand-rolled element
+    // concat that silently dropped views.
     const next: Model = mode === 'merge'
-      ? {
-          ...workspace.model,
-          elements: [...workspace.model.elements, ...incoming.elements.filter((element) => !workspace.model.elements.some((current) => current.id === element.id))],
-          relationships: [...workspace.model.relationships, ...incoming.relationships.filter((relationship) => !workspace.model.relationships.some((current) => current.id === relationship.id))],
-        }
+      ? mergeModels(workspace.model, { ...incoming, id: workspace.model.id })
       : { ...incoming, id: workspace.model.id };
+    // Invariant 6: the apply path validates like every other write.
+    const problem = modelWriteProblem(next);
+    if (problem) return reply.code(400).send({ error: problem });
     const changeCount = diffModels(workspace.model, next);
     workspace.model = next;
     workspace.version += 1;
@@ -730,7 +839,9 @@ app.get('/api/models/:id/waivers', async (request, reply) => {
 app.post('/api/models/:id/waivers', async (request, reply) => {
   const workspace = workspaces.get((request.params as { id: string }).id);
   if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
-  const actor = requireRole(request, reply, workspace, ['owner', 'editor']);
+  // Waivers exempt governance rules — the same accountability level as
+  // approvals, so only owners can grant or remove them.
+  const actor = requireRole(request, reply, workspace, ['owner']);
   if (!actor) return;
   const body = (request.body ?? {}) as { rule?: string; entityId?: string; reason?: string };
   if (!body.rule || !body.reason?.trim()) {
@@ -754,7 +865,7 @@ app.delete('/api/models/:id/waivers/:waiverId', async (request, reply) => {
   const { id, waiverId } = request.params as { id: string; waiverId: string };
   const workspace = workspaces.get(id);
   if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
-  const actor = requireRole(request, reply, workspace, ['owner', 'editor']);
+  const actor = requireRole(request, reply, workspace, ['owner']);
   if (!actor) return;
   const before = workspace.model.waivers ?? [];
   workspace.model.waivers = before.filter((waiver) => waiver.id !== waiverId);
@@ -820,7 +931,9 @@ app.get('/api/ai/context/:id', async (request, reply) => {
   const workspace = workspaces.get((request.params as { id: string }).id);
   if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
   if (!requireMember(request, reply, workspace)) return;
-  return { modelId: workspace.model.id, markdown: modelToMarkdown(workspace.model) };
+  // Invariant 7: model text is untrusted — AI-facing text keeps the
+  // SAFETY_PREFIX like every other AI surface in the product.
+  return { modelId: workspace.model.id, markdown: sanitizeAiText(modelToMarkdown(workspace.model)) };
 });
 
 app.post('/api/ai/validate/:id', async (request, reply) => {

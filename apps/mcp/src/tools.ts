@@ -1259,8 +1259,21 @@ async function updateElement(args: Record<string, unknown>, store: ModelStore): 
   if (name !== undefined) element.name = localized(name);
   if (documentation !== undefined) element.documentation = documentation ? localized(documentation) : [];
   if (properties !== undefined) element.properties = properties;
+  // A type change can retroactively make existing relationships illegal —
+  // validate and report instead of writing silently questionable models.
+  const issues = validateModel(model);
   await store.saveModel(model);
-  return { modelId: model.id, element };
+  return {
+    modelId: model.id,
+    element,
+    validation: {
+      errorCount: issues.filter((issue) => issue.severity === 'error').length,
+      warnings: issues
+        .filter((issue) => issue.severity === 'warning' && issue.entityId === elementId)
+        .map((issue) => `${issue.rule}: ${issue.message}`),
+      note: 'Type changes can invalidate relationships touching this element; review warnings.',
+    },
+  };
 }
 
 async function deleteElement(args: Record<string, unknown>, store: ModelStore): Promise<unknown> {
@@ -1769,6 +1782,15 @@ async function applyEnrichment(args: Record<string, unknown>, store: ModelStore)
   model.elements.push(...elements);
   model.relationships.push(...relationships);
   const issues = validateModel(model);
+  // Same rule as apply_aoef: refuse to persist error-severity results
+  // (invariant 6 must hold uniformly across MCP write tools).
+  const errors = issues.filter((issue) => issue.severity === 'error');
+  if (errors.length) {
+    fail({
+      error: `Applying this enrichment would produce ${errors.length} validation error(s); nothing was written.`,
+      suggestion: `First error: ${errors[0].message}. Use preview_enrichment to inspect the proposal.`,
+    });
+  }
   await store.saveModel(model);
   return {
     appliedElements: elements.length,
