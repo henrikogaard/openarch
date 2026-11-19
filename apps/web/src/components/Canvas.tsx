@@ -25,6 +25,7 @@ import {
   getElementType,
   getRelationshipType,
   LAYER_LABELS,
+  PALETTE_HIDDEN_TYPES,
   primaryText,
   type NodeAlignment,
   type ArchiElement,
@@ -169,6 +170,33 @@ function toFlowNodes(
   const byId = new Map(elements.map((element) => [element.id, element]));
   const boundsById = new Map(view.nodes.map((node) => [node.id, node.bounds]));
   return view.nodes.map((node) => {
+    if (node.type === 'Container') {
+      // Containers visualise a Grouping element via their native
+      // groupingElementId link — they are draggable, selectable frames.
+      const container = node.groupingElementId ? byId.get(node.groupingElementId) : undefined;
+      const parent = node.parentId ? boundsById.get(node.parentId) : undefined;
+      const position = parent
+        ? { x: node.bounds.x - parent.x, y: node.bounds.y - parent.y }
+        : { x: node.bounds.x, y: node.bounds.y };
+      return {
+        id: node.id,
+        type: 'archi',
+        position,
+        style: {
+          width: node.bounds.w,
+          height: node.bounds.h,
+          ...(node.zIndex !== undefined ? { zIndex: node.zIndex } : {}),
+        },
+        data: {
+          label: primaryText(container?.name ?? node.label) || 'Group',
+          typeId: container?.type ?? 'Grouping',
+          elementId: node.groupingElementId ?? '',
+          dimmed: false,
+          attributes: [],
+        } as ArchiNodeData,
+        ...(node.parentId ? { parentId: node.parentId } : {}),
+      };
+    }
     if (!node.elementRef) {
       return {
         id: node.id,
@@ -388,8 +416,10 @@ function CanvasFlow({
   }, [initialNodes, setNodes]);
   useEffect(() => setEdges(initialEdges), [initialEdges, setEdges]);
 
-  const matches = ELEMENT_TYPES.filter((type) =>
-    `${type.label} ${type.id}`.toLowerCase().includes(query.toLowerCase()),
+  const matches = ELEMENT_TYPES.filter(
+    (type) =>
+      !PALETTE_HIDDEN_TYPES.has(type.id) &&
+      `${type.label} ${type.id}`.toLowerCase().includes(query.toLowerCase()),
   );
 
   const selectedElementIds = useMemo(

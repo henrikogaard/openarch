@@ -42,6 +42,11 @@ export function metamodelVersions(): string[] {
   return [...metamodelRegistries.keys()];
 }
 
+/** Remove a registered metamodel version (test cleanup / plugin teardown). */
+export function unregisterMetamodelVersion(version: string): void {
+  metamodelRegistries.delete(version);
+}
+
 export const LAYER_COLORS: Record<Layer, string> = {
   business: '#f7dc6f',
   application: '#8ec3e8',
@@ -89,7 +94,12 @@ export const LAYER_ORDER: Layer[] = [
 type Shape = ElementTypeDefinition['shape'];
 type ElementSpec = [id: string, label: string, layer: Layer, kind: ElementKind, shape: Shape, icon: string];
 
-/** 59 ArchiMate 3.2 element types across layers, aspects, and extensions. */
+/**
+ * ArchiMate 3.2 element types across layers, aspects, and extensions
+ * (`ELEMENT_TYPES.length` entries). Two legacy types removed in ArchiMate
+ * 3.0 (`BusinessComponent`, `MigrationEvent`) are kept for import tolerance
+ * but hidden from the palette — see `PALETTE_HIDDEN_TYPES`.
+ */
 const ELEMENT_SPECS: ElementSpec[] = [
   // Strategy
   ['Resource', 'Resource', 'strategy', 'active', 'square', 'R'],
@@ -190,6 +200,19 @@ export const ELEMENT_TYPES: ElementTypeDefinition[] = ELEMENT_SPECS.map(
     color: LAYER_COLORS[layer],
   }),
 );
+
+/**
+ * Types kept in the registry for import tolerance but NOT offered in the
+ * palette, because the bundled AOEF 3.0 XSD rejects them:
+ * - `BusinessComponent`, `MigrationEvent` — removed in ArchiMate 3.0;
+ * - `ValueStream` — legal from ArchiMate 3.1 but absent from the vendored
+ *   3.0 XSD (kept visible deliberately for the value-stream feature;
+ *   exports containing it do not pass the current conformance suite).
+ */
+export const PALETTE_HIDDEN_TYPES: ReadonlySet<string> = new Set([
+  'BusinessComponent',
+  'MigrationEvent',
+]);
 
 export type RelationshipGroup = 'structural' | 'dependency' | 'dynamic' | 'other';
 

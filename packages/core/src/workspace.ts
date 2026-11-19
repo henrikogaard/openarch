@@ -91,13 +91,15 @@ export function filterModelByDomain(model: Model, domainId: string | 'all'): Mod
   return { ...model, elements, relationships, views };
 }
 
-/** Resolve view node ids to the elements they show (label/group nodes are skipped). */
+/** Resolve view node ids to the elements they show (containers resolve to their Grouping element). */
 export function elementRefsForNodes(model: Model, nodeIds: string[]): string[] {
   const ids = new Set(nodeIds);
   const refs = new Set<string>();
   for (const view of model.views) {
     for (const node of view.nodes) {
-      if (ids.has(node.id) && node.elementRef) refs.add(node.elementRef);
+      if (!ids.has(node.id)) continue;
+      if (node.elementRef) refs.add(node.elementRef);
+      if (node.groupingElementId) refs.add(node.groupingElementId);
     }
   }
   return [...refs];
@@ -122,14 +124,31 @@ export function relationshipRefsForEdges(model: Model, edgeIds: string[]): strin
  */
 export function removeElements(model: Model, elementIds: string[]): Model {
   const ids = new Set(elementIds);
-  if (!model.elements.some((element) => ids.has(element.id))) return model;
+  if (model.elements.some((element) => ids.has(element.id))) {
+    // fallthrough to the removal below
+  } else if (!model.views.some((view) => view.nodes.some((node) => node.id && ids.has(node.id)))) {
+    return model;
+  }
   const elements = model.elements.filter((element) => !ids.has(element.id));
   const relationships = model.relationships.filter(
     (relationship) => !ids.has(relationship.source) && !ids.has(relationship.target),
   );
   const relationshipIds = new Set(relationships.map((relationship) => relationship.id));
   const views = model.views.map((view) => {
-    const nodes = view.nodes.filter((node) => !node.elementRef || !ids.has(node.elementRef));
+    const remaining = view.nodes.filter(
+      (node) =>
+        (!node.elementRef || !ids.has(node.elementRef)) &&
+        (!node.groupingElementId || !ids.has(node.groupingElementId)) &&
+        !ids.has(node.id),
+    );
+    const removedNodeIds = new Set(
+      view.nodes.filter((node) => !remaining.includes(node)).map((node) => node.id),
+    );
+    // Surviving children of a removed container are promoted to roots —
+    // bounds are already absolute in the model, so only the link is dropped.
+    const nodes = remaining.map((node) =>
+      node.parentId && removedNodeIds.has(node.parentId) ? { ...node, parentId: undefined } : node,
+    );
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges = view.edges.filter(
       (edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target) && relationshipIds.has(edge.relationshipRef),
@@ -185,12 +204,22 @@ export function duplicateElements(
   if (!selected.length) return model;
 
   const elementIdMap = new Map(selected.map((element) => [element.id, `el-${crypto.randomUUID()}`]));
-  const newElements: ArchiElement[] = selected.map((element) => ({
-    ...element,
-    id: elementIdMap.get(element.id)!,
-    name: element.name.map((text) => ({ ...text, value: `${text.value} (copy)` })),
-    properties: element.properties.map((property) => ({ ...property })),
-  }));
+  const newElements: ArchiElement[] = selected.map((element) => {
+    const { raw: _raw, ...rest } = element;
+    void _raw;
+    return {
+      ...rest,
+      id: elementIdMap.get(element.id)!,
+      // Append the copy marker to English/primary names only — other locales
+      // keep their native spelling.
+      name: element.name.map((text) =>
+        element.name.length === 1 || text.lang === 'en'
+          ? { ...text, value: `${text.value} (copy)` }
+          : { ...text },
+      ),
+      properties: element.properties.map((property) => ({ ...property })),
+    };
+  });
 
   const relationshipIdMap = new Map<string, string>();
   const newRelationships = model.relationships
@@ -216,8 +245,10 @@ export function duplicateElements(
       .map((node) => {
         const id = `node-${crypto.randomUUID()}`;
         nodeIdMap.set(node.id, id);
+        const { raw: _nodeRaw, ...rest } = node;
+        void _nodeRaw;
         return {
-          ...node,
+          ...rest,
           id,
           elementRef: elementIdMap.get(node.elementRef!)!,
           label: node.label.map((text) => ({ ...text })),
@@ -231,14 +262,18 @@ export function duplicateElements(
       });
     const addedEdges = view.edges
       .filter((edge) => nodeIdMap.has(edge.source) && nodeIdMap.has(edge.target))
-      .map((edge) => ({
-        ...edge,
-        id: `edge-${crypto.randomUUID()}`,
-        relationshipRef: relationshipIdMap.get(edge.relationshipRef)!,
-        source: nodeIdMap.get(edge.source)!,
-        target: nodeIdMap.get(edge.target)!,
-        bendpoints: edge.bendpoints.map((point) => ({ ...point })),
-      }));
+      .map((edge) => {
+        const { raw: _edgeRaw, ...rest } = edge;
+        void _edgeRaw;
+        return {
+          ...rest,
+          id: `edge-${crypto.randomUUID()}`,
+          relationshipRef: relationshipIdMap.get(edge.relationshipRef)!,
+          source: nodeIdMap.get(edge.source)!,
+          target: nodeIdMap.get(edge.target)!,
+          bendpoints: edge.bendpoints.map((point) => ({ ...point })),
+        };
+      });
     return { ...view, nodes: [...view.nodes, ...addedNodes], edges: [...view.edges, ...addedEdges] };
   });
 
@@ -342,18 +377,22 @@ export function reconnectRelationship(
       ? { ...candidate, source: sourceElementId, target: targetElementId }
       : candidate,
   );
-  const views = model.views.map((view) => ({
-    ...view,
-    edges: view.edges.map((edge) =>
-      edge.relationshipRef === relationshipId
-        ? {
-            ...edge,
-            source: view.nodes.find((node) => node.elementRef === sourceElementId)?.id ?? edge.source,
-            target: view.nodes.find((node) => node.elementRef === targetElementId)?.id ?? edge.target,
-          }
-        : edge,
-    ),
-  }));
+  // Views are projections of the canonical model: an edge that can no longer
+  // depict the relationship's endpoints faithfully in a view is REMOVED
+  // from that view (elsewhere it keeps lying about what it shows), rather
+  // than silently keeping its old endpoints.
+  const views = model.views.map((view) => {
+    const sourceNodeId = view.nodes.find((node) => node.elementRef === sourceElementId)?.id;
+    const targetNodeId = view.nodes.find((node) => node.elementRef === targetElementId)?.id;
+    return {
+      ...view,
+      edges: view.edges.flatMap((edge) => {
+        if (edge.relationshipRef !== relationshipId) return [edge];
+        if (!sourceNodeId || !targetNodeId) return [];
+        return [{ ...edge, source: sourceNodeId, target: targetNodeId }];
+      }),
+    };
+  });
   return { ...model, relationships, views };
 }
 
@@ -398,9 +437,11 @@ export function groupNodes(model: Model, viewId: string, nodeIds: string[]): Mod
   };
   const groupNode: ViewNode = {
     id: groupNodeId,
-    type: 'Group',
-    elementRef: groupElementId,
-    label: [],
+    // AOEF containers cannot carry elementRef — the Grouping element is
+    // linked natively via groupingElementId instead.
+    type: 'Container',
+    groupingElementId: groupElementId,
+    label: [{ lang: 'en', value: 'Group' }],
     bounds: { x: minX - 20, y: minY - 20, w: maxX - minX + 40, h: maxY - minY + 40 },
   };
   const nodes = [
@@ -427,19 +468,41 @@ export function ungroupNodes(model: Model, viewId: string, nodeIds: string[]): M
   const orphanedGroups = [...parents].filter(
     (parentId) => !nodes.some((node) => node.parentId === parentId),
   );
+  const orphanedGroupIds = new Set(orphanedGroups);
   const orphanedElementRefs = new Set(
-    nodes.filter((node) => orphanedGroups.includes(node.id)).map((node) => node.elementRef),
+    nodes
+      .filter((node) => orphanedGroupIds.has(node.id))
+      .map((node) => node.elementRef ?? node.groupingElementId)
+      .filter((id): id is string => Boolean(id)),
   );
-  nodes = nodes.filter((node) => !orphanedGroups.includes(node.id));
+  nodes = nodes.filter((node) => !orphanedGroupIds.has(node.id));
   const elements = model.elements.filter((element) => !orphanedElementRefs.has(element.id));
-  const relationships = model.relationships.filter(
-    (relationship) => !orphanedElementRefs.has(relationship.source) && !orphanedElementRefs.has(relationship.target),
+  const removedRelationshipIds = new Set(
+    model.relationships
+      .filter(
+        (relationship) =>
+          orphanedElementRefs.has(relationship.source) || orphanedElementRefs.has(relationship.target),
+      )
+      .map((relationship) => relationship.id),
   );
+  const relationships = model.relationships.filter((relationship) => !removedRelationshipIds.has(relationship.id));
+  // Prune edges that referenced removed relationships or attached to the
+  // removed group nodes — in every view, not just the one being ungrouped.
+  const prunedViews = model.views.map((candidate) => ({
+    ...candidate,
+    nodes: candidate.id === viewId ? nodes : candidate.nodes,
+    edges: candidate.edges.filter(
+      (edge) =>
+        !orphanedGroupIds.has(edge.source) &&
+        !orphanedGroupIds.has(edge.target) &&
+        !removedRelationshipIds.has(edge.relationshipRef),
+    ),
+  }));
   return {
     ...model,
     elements,
     relationships,
-    views: model.views.map((candidate) => (candidate.id === viewId ? { ...candidate, nodes } : candidate)),
+    views: prunedViews,
   };
 }
 

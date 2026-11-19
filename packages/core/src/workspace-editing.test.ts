@@ -185,20 +185,21 @@ describe('canvas editing helpers', () => {
     const grouped = groupNodes(model, 'view-overview', ['n1', 'n2']);
     const view = grouped.views[0];
     const groupNode = view.nodes[0];
-    expect(groupNode.type).toBe('Group');
+    expect(groupNode.type).toBe('Container');
+    expect(groupNode.groupingElementId).toBeTruthy();
     expect(view.nodes.find((n) => n.id === 'n1')!.parentId).toBe(groupNode.id);
     expect(view.nodes.find((n) => n.id === 'n2')!.parentId).toBe(groupNode.id);
     expect(view.nodes.find((n) => n.id === 'n3')!.parentId).toBeUndefined();
-    expect(grouped.elements.some((e) => e.id === groupNode.elementRef && e.type === 'Grouping')).toBe(true);
+    expect(grouped.elements.some((e) => e.id === groupNode.groupingElementId && e.type === 'Grouping')).toBe(true);
     // Group bounds enclose the members.
     expect(groupNode.bounds.x).toBeLessThan(40);
     expect(groupNode.bounds.y).toBeLessThan(80);
 
     const ungrouped = ungroupNodes(grouped, 'view-overview', ['n1', 'n2']);
     expect(ungrouped.views[0].nodes.find((n) => n.id === 'n1')!.parentId).toBeUndefined();
-    // The now-empty group node and its element are removed.
+    // The now-empty container node and its grouping element are removed.
     expect(ungrouped.views[0].nodes.some((n) => n.id === groupNode.id)).toBe(false);
-    expect(ungrouped.elements.some((e) => e.id === groupNode.elementRef)).toBe(false);
+    expect(ungrouped.elements.some((e) => e.id === groupNode.groupingElementId)).toBe(false);
     expect(groupNodes(model, 'view-overview', ['n1'])).toBe(model);
   });
 

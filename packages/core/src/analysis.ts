@@ -24,6 +24,7 @@ export function traceElements(model: Model, elementId: string, options: TraceOpt
   const maxDepth = options.maxDepth ?? 3;
   const types = options.relationshipTypes;
   const results: TraceEntry[] = [];
+  const elementIndex = new Map(model.elements.map((element) => [element.id, element]));
   const visited = new Set<string>([elementId]);
   let frontier = [elementId];
 
@@ -43,7 +44,7 @@ export function traceElements(model: Model, elementId: string, options: TraceOpt
           direction = 'in';
         }
         if (!otherId || !direction || visited.has(otherId)) continue;
-        const element = getElementById(model, otherId);
+        const element = elementIndex.get(otherId);
         if (!element) continue;
         visited.add(otherId);
         results.push({ element, relationship, direction, depth });
@@ -89,13 +90,25 @@ export function buildMatrix(
   const rowIds = new Set(rows.map((element) => element.id));
   const columnIds = new Set(columns.map((element) => element.id));
   const cells: MatrixCell[] = [];
+  const cellIndex = new Map<string, MatrixCell>();
+  const upsert = (rowId: string, columnId: string, relationship: Relationship): void => {
+    const key = `${rowId}\u0000${columnId}`;
+    const existing = cellIndex.get(key);
+    if (existing) {
+      existing.relationships.push(relationship);
+      return;
+    }
+    const cell: MatrixCell = { rowId, columnId, relationships: [relationship] };
+    cellIndex.set(key, cell);
+    cells.push(cell);
+  };
 
   for (const relationship of model.relationships) {
     if (relationshipTypes && !relationshipTypes.includes(relationship.type)) continue;
     if (rowIds.has(relationship.source) && columnIds.has(relationship.target)) {
-      cells.push({ rowId: relationship.source, columnId: relationship.target, relationships: [relationship] });
+      upsert(relationship.source, relationship.target, relationship);
     } else if (rowIds.has(relationship.target) && columnIds.has(relationship.source)) {
-      cells.push({ rowId: relationship.target, columnId: relationship.source, relationships: [relationship] });
+      upsert(relationship.target, relationship.source, relationship);
     }
   }
   return { title, rows, columns, cells };

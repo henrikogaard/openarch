@@ -105,7 +105,7 @@ export interface Bounds extends Point {
 
 export interface ViewNode {
   id: string;
-  /** AOEF xsi:type of the view node, e.g. "Element", "Label", "Group". */
+  /** AOEF xsi:type of the view node, e.g. "Element", "Label", "Container". */
   type: string;
   elementRef?: string;
   viewRef?: string;
@@ -113,6 +113,11 @@ export interface ViewNode {
   bounds: Bounds;
   /** Native-only: parent container node id (RF nesting). Not exported to AOEF. */
   parentId?: string;
+  /**
+   * Native-only: the Grouping element this container visualises (containers
+   * cannot carry elementRef in AOEF). Not exported.
+   */
+  groupingElementId?: string;
   /** Native-only: stacking order within the view. Not exported to AOEF. */
   zIndex?: number;
   raw?: RawXml;
@@ -323,6 +328,7 @@ export function createModel(partial: Partial<Model> = {}): Model {
     domains: partial.domains ?? [],
     artefacts: partial.artefacts ?? [],
     approvals: partial.approvals ?? [],
+    waivers: partial.waivers ?? [],
     createdAt: partial.createdAt ?? new Date().toISOString(),
     updatedAt: partial.updatedAt,
     raw: partial.raw,
