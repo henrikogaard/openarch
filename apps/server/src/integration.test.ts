@@ -47,6 +47,7 @@ beforeAll(async () => {
       OPENARCH_DATA: join(dataDirectory, 'models.json'),
       OPENARCH_REQUIRE_AUTH: 'true',
       OPENARCH_SCIM_TOKEN: 'scim-secret',
+      OPENARCH_JWT_SECRET: 'test-secret',
       OPENARCH_ADMIN: 'admin',
       OPENARCH_TOKENS: JSON.stringify({
         'admin-token': { subject: 'admin', displayName: 'Admin' },
@@ -444,5 +445,82 @@ describe('write validation gate + governance fixes', () => {
     });
     expect(posted.status).toBe(201);
     expect(posted.body.author).toBe('admin');
+  });
+});
+
+describe('member management and group→role mapping', () => {
+  it('members are listed for members and saved by the owner', async () => {
+    const list = await json<{ members: Array<{ subject: string; role: string }> }>(
+      '/api/models/sample-model/members',
+      { headers: admin },
+    );
+    expect(list.status).toBe(200);
+    expect(list.body.members.length).toBeGreaterThan(0);
+
+    const updated = await json<{ members: Array<{ subject: string; role: string }> }>(
+      '/api/models/sample-model/members',
+      {
+        method: 'PUT',
+        headers: { ...admin, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          members: [{ subject: 'admin', role: 'owner' }, { subject: 'new-editor', role: 'editor' }],
+          groupRoles: [{ group: 'ea-admins', role: 'owner' }],
+        }),
+      },
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.body.members.some((m) => m.subject === 'new-editor')).toBe(true);
+
+    // Viewer CN write.
+    const denied = await json('/api/models/sample-model/members', {
+      method: 'PUT',
+      headers: { ...viewer, 'content-type': 'application/json' },
+      body: JSON.stringify({ members: [{ subject: 'viewer', role: 'owner' }] }),
+    });
+    expect(denied.status).toBe(403);
+
+    // Restoring one owner is required — dropping all owners is rejected.
+    const noOwner = await json('/api/models/sample-model/members', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ members: [{ subject: 'admin', role: 'viewer' }] }),
+    });
+    expect(noOwner.status).toBe(400);
+  });
+
+  it('group roles grant access to actors without explicit membership (HS256 groups claim)', async () => {
+    // Set a group→owner mapping for group 'ea-admins'.
+    await json('/api/models/sample-model/members', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        members: [{ subject: 'admin', role: 'owner' }],
+        groupRoles: [{ group: 'ea-admins', role: 'owner' }],
+      }),
+    });
+    // Mint an HS256 JWT with a groups claim for a brand-new subject.
+    const { createHmac } = await import('node:crypto');
+    const secret = 'test-secret';
+    const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const header = encode({ alg: 'HS256', typ: 'JWT' });
+    const payload = encode({
+      sub: 'group-member-1',
+      groups: ['ea-admins'],
+      exp: Math.floor(Date.now() / 1000) + 600,
+    });
+    const signature = createHmac('sha256', secret)
+      .update(`${header}.${payload}`)
+      .digest('base64url');
+    const token = `${header}.${payload}.${signature}`;
+    // The group-mapped actor reads the otherwise non-member workspace.
+    const models = await json<Array<Record<string, unknown>>>('/api/models', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(models.status).toBe(200);
+    expect(models.body.some((entry) => entry.id === 'sample-model')).toBe(true);
+    const role = await json<{ roles?: Record<string, string> }>('/api/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(role.body.roles?.['sample-model']).toBe('owner');
   });
 });

@@ -1,10 +1,12 @@
 import { getElementType, validateModel, type Model } from '@openarch/core';
+import { useTranslation } from '../i18n';
 
 interface DashboardProps {
   model: Model;
 }
 
 export default function Dashboard({ model }: DashboardProps) {
+  const t = useTranslation();
   const byLayer = new Map<string, number>();
   const byType = new Map<string, number>();
   for (const element of model.elements) {
@@ -22,8 +24,8 @@ export default function Dashboard({ model }: DashboardProps) {
     <div className="page">
       <header className="page-header">
         <div>
-          <h2>Model dashboard</h2>
-          <p>Live statistics computed from the same repository the editor uses.</p>
+          <h2>{t('modelDashboard')}</h2>
+          <p>{t('dashboardSubtitle')}</p>
         </div>
       </header>
 
@@ -48,7 +50,7 @@ export default function Dashboard({ model }: DashboardProps) {
 
       <div className="dashboard-grid">
         <section className="panel-card">
-          <h3>Elements by layer</h3>
+          <h3>{t('elementsByLayer')}</h3>
           {[...byLayer.entries()].sort((a, b) => b[1] - a[1]).map(([layer, count]) => (
             <div className="bar-row" key={layer}>
               <span className="bar-label">{layer}</span>
@@ -61,7 +63,7 @@ export default function Dashboard({ model }: DashboardProps) {
         </section>
 
         <section className="panel-card">
-          <h3>Element types</h3>
+          <h3>{t('elementTypes')}</h3>
           <div className="chip-cloud">
             {[...byType.entries()].sort((a, b) => b[1] - a[1]).map(([type, count]) => (
               <span className="chip" key={type}>
@@ -72,7 +74,7 @@ export default function Dashboard({ model }: DashboardProps) {
         </section>
 
         <section className="panel-card wide">
-          <h3>Validation</h3>
+          <h3>{t('validation')}</h3>
           {issues.length === 0 ? (
             <p className="ok">No issues found.</p>
           ) : (

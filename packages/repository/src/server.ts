@@ -1,4 +1,4 @@
-import type { Model, ModelSummary, SavedView, Waiver } from '@openarch/core';
+import type { GroupRole, Model, ModelSummary, SavedView, Waiver, WorkspaceMember } from '@openarch/core';
 import { type ModelRepository, summarize } from './types';
 
 export interface ModelMeta {
@@ -192,6 +192,22 @@ export class ServerRepository implements ModelRepository {
       `/models/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}/restore`,
       { method: 'POST' },
     ) as Promise<Model>;
+  }
+
+  getMembers(id: string): Promise<{ members: WorkspaceMember[]; groupRoles: GroupRole[] }> {
+    return this.request(`/models/${encodeURIComponent(id)}/members`);
+  }
+
+  saveMembers(
+    id: string,
+    members: WorkspaceMember[],
+    groupRoles: GroupRole[],
+  ): Promise<{ members: WorkspaceMember[]; groupRoles: GroupRole[] }> {
+    return this.request(`/models/${encodeURIComponent(id)}/members`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ members, groupRoles }),
+    });
   }
 
   listApprovals(id: string): Promise<unknown[]> {

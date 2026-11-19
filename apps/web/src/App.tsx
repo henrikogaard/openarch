@@ -1716,6 +1716,16 @@ export default function App() {
                   model={model}
                   connectors={connectors}
                   onConnectorsChange={setConnectors}
+                  membersManager={
+                    repository instanceof ServerRepository
+                      ? {
+                          load: () => repository.getMembers!(model.id),
+                          save: async (nextMembers, nextGroupRoles) => {
+                            await repository.saveMembers!(model.id, nextMembers, nextGroupRoles);
+                          },
+                        }
+                      : null
+                  }
                   serverOrgId={null}
                   onSetOrg={(orgId) => {
                     if (repository.setOrg) {

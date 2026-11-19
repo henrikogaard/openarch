@@ -1,4 +1,5 @@
 import { diffSummary, primaryText, type Model, type ModelDiff } from '@openarch/core';
+import { useTranslation } from '../i18n';
 
 interface ImportPreviewProps {
   diff: ModelDiff;
@@ -24,6 +25,7 @@ function truncate(value: string, max = 80): string {
 }
 
 function DiffSection({ title, entries }: { title: string; entries: DiffEntry[] }) {
+  const t = useTranslation();
   const shown = entries.slice(0, LIST_LIMIT);
   const more = entries.length - shown.length;
   return (
@@ -32,7 +34,7 @@ function DiffSection({ title, entries }: { title: string; entries: DiffEntry[] }
         {title} <span className="muted">({entries.length})</span>
       </h4>
       {entries.length === 0 ? (
-        <p className="empty muted">None</p>
+        <p className="empty muted">{t('none')}</p>
       ) : (
         <ul className="preview-list">
           {shown.map((entry, index) => (
@@ -50,6 +52,7 @@ function DiffSection({ title, entries }: { title: string; entries: DiffEntry[] }
 }
 
 export default function ImportPreview(props: ImportPreviewProps) {
+  const t = useTranslation();
   const { diff, incoming, current, onReplace, onAddAsNew, onMerge, onCancel } = props;
 
   const addedElements: DiffEntry[] = diff.addedElements.map((item) => ({ badge: '+', tone: 'info', main: item }));
@@ -77,7 +80,7 @@ export default function ImportPreview(props: ImportPreviewProps) {
         }}
       >
         <header className="import-dialog-header">
-          <h2 id="import-preview-title">Import preview</h2>
+          <h2 id="import-preview-title">{t('importPreview')}</h2>
           <p className="muted">
             {primaryText(current.name) || current.id} → <strong>{primaryText(incoming.name) || incoming.id}</strong>
             {' · '}
@@ -97,14 +100,14 @@ export default function ImportPreview(props: ImportPreviewProps) {
         </div>
 
         <footer className="import-dialog-footer">
-          <button className="primary-button" onClick={onReplace}>Replace current model</button>
+          <button className="primary-button" onClick={onReplace}>{t('replaceCurrent')}</button>
           {onMerge && (
-            <button className="small-button" onClick={onMerge} title="Apply incoming changes onto the current model; nothing is deleted">
+            <button className="small-button" onClick={onMerge} title={t('mergeTitle')}>
               Merge into current
             </button>
           )}
-          <button className="small-button" onClick={onAddAsNew}>Add as new model</button>
-          <button className="link-button" onClick={onCancel}>Cancel</button>
+          <button className="small-button" onClick={onAddAsNew}>{t('addAsNew')}</button>
+          <button className="link-button" onClick={onCancel}>{t('cancel')}</button>
         </footer>
       </div>
     </div>

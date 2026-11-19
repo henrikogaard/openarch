@@ -12,7 +12,9 @@ import {
   type SavedView,
   type View,
   type Waiver,
+  type GroupRole,
   type WorkspaceMember,
+  type WorkspaceRole,
 } from '@openarch/core';
 import { diffSummary, mergeModels, type ModelDiff } from '@openarch/core';
 import { modelToMarkdown, sanitizeAiText, validateAiModel } from '@openarch/ai';
@@ -54,6 +56,8 @@ interface Workspace {
   model: Model;
   /** Optional organisation/tenant id for multi-tenant deployments. */
   orgId?: string;
+  /** Group→role mappings used when the actor has no explicit membership. */
+  groupRoles?: GroupRole[];
   version: number;
   updatedAt: string;
   updatedBy: string;
@@ -325,7 +329,7 @@ function requireMember(
 ): Actor | null {
   const actor = requireActor(request, reply);
   if (!actor) return null;
-  if (!isMember(workspace.members, actor)) {
+  if (!isMember(workspace.members, actor, undefined, workspace.groupRoles)) {
     void reply.code(403).send({ error: 'Forbidden: you are not a member of this workspace' });
     return null;
   }
@@ -341,7 +345,7 @@ function requireRole(
 ): Actor | null {
   const actor = requireActor(request, reply);
   if (!actor) return null;
-  if (!hasRole(roleFor(workspace.members, actor), allowed)) {
+  if (!hasRole(roleFor(workspace.members, actor, undefined, workspace.groupRoles), allowed)) {
     void reply.code(403).send({ error: 'Forbidden: your workspace role does not allow this operation' });
     return null;
   }
@@ -358,7 +362,7 @@ app.get('/api/me', async (request, reply) => {
   if (!actor) return;
   const roles: Record<string, string> = {};
   for (const workspace of workspaces.values()) {
-    roles[workspace.model.id] = roleFor(workspace.members, actor);
+    roles[workspace.model.id] = roleFor(workspace.members, actor, undefined, workspace.groupRoles);
   }
   return { ...actor, roles };
 });
@@ -440,7 +444,11 @@ app.get('/api/models', async (request, reply) => {
   const orgId = (request.query as { orgId?: string }).orgId;
   const query = request.query as { summary?: string; limit?: string; cursor?: string };
   const readable = [...workspaces.values()]
-    .filter((workspace) => !authConfig.required || isMember(workspace.members, actor))
+    .filter(
+      (workspace) =>
+        !authConfig.required ||
+        isMember(workspace.members, actor, undefined, workspace.groupRoles),
+    )
     .filter((workspace) => !orgId || workspace.orgId === orgId);
   // Summary mode returns lightweight metadata (the web home screen only
   // needs summaries; full models are fetched on open) and supports simple
@@ -469,7 +477,7 @@ app.get('/api/models/:id/meta', async (request, reply) => {
     commentCount: workspace.comments.length,
     snapshotCount: workspace.snapshots.length,
     savedViewCount: workspace.savedViews.length,
-    role: roleFor(workspace.members, resolveActor(request.headers)!),
+    role: roleFor(workspace.members, resolveActor(request.headers)!, undefined, workspace.groupRoles),
   };
 });
 
@@ -734,7 +742,7 @@ app.get('/api/models/:id/members', async (request, reply) => {
   const workspace = workspaces.get((request.params as { id: string }).id);
   if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
   if (!requireMember(request, reply, workspace)) return;
-  return workspace.members ?? [];
+  return { members: workspace.members ?? [], groupRoles: workspace.groupRoles ?? [] };
 });
 
 app.put('/api/models/:id/members/:subject', async (request, reply) => {
@@ -837,7 +845,9 @@ app.get('/api/portfolio', async (request, reply) => {
   const actor = requireActor(request, reply);
   if (!actor) return;
   const readable = [...workspaces.values()].filter(
-    (workspace) => !authConfig.required || isMember(workspace.members, actor),
+    (workspace) =>
+      !authConfig.required ||
+      isMember(workspace.members, actor, undefined, workspace.groupRoles),
   );
   return {
     workspaces: readable.map((workspace) => ({
@@ -896,6 +906,51 @@ app.delete('/api/models/:id/waivers/:waiverId', async (request, reply) => {
   audit(workspace, actor.subject, 'delete', `Removed waiver ${waiverId}`);
   persistToDisk();
   return reply.code(204).send();
+});
+
+
+// ── Member management (bulk) & group→role mapping ──────────────────────────
+
+app.put('/api/models/:id/members', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner']);
+  if (!actor) return;
+  const body = (request.body ?? {}) as {
+    members?: Array<{ subject?: string; role?: string; displayName?: string }>;
+    groupRoles?: Array<{ group?: string; role?: string }>;
+  };
+  const validRoles = new Set(['owner', 'editor', 'viewer']);
+  const members = (body.members ?? [])
+    .filter((member) => member.subject?.trim() && validRoles.has(String(member.role)))
+    .map((member) => ({
+      subject: String(member.subject).trim(),
+      role: String(member.role) as WorkspaceRole,
+      displayName: member.displayName,
+    }));
+  // Governance guard: an owner must remain.
+  if (!members.some((member) => member.role === 'owner')) {
+    return reply.code(400).send({ error: 'At least one owner must remain a member' });
+  }
+  for (const entry of body.groupRoles ?? []) {
+    if (!entry.group?.trim() || !validRoles.has(String(entry.role))) {
+      return reply.code(400).send({ error: `Invalid group→role mapping: ${JSON.stringify(entry)}` });
+    }
+  }
+  const groupRoles = (body.groupRoles ?? []).map((entry) => ({
+    group: String(entry.group).trim(),
+    role: String(entry.role) as WorkspaceRole,
+  }));
+  workspace.members = members;
+  workspace.groupRoles = groupRoles;
+  audit(
+    workspace,
+    actor.subject,
+    'update',
+    `Members updated (${members.length} member(s), ${groupRoles.length} group→role mapping(s))`,
+  );
+  persistToDisk();
+  return { members: workspace.members, groupRoles: workspace.groupRoles };
 });
 
 app.get('/api/models/:id/approvals', async (request, reply) => {

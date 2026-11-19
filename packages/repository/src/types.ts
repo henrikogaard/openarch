@@ -1,4 +1,4 @@
-import type { Model, ModelSummary, SavedView, Waiver } from '@openarch/core';
+import type { GroupRole, Model, ModelSummary, SavedView, Waiver, WorkspaceMember } from '@openarch/core';
 import { workspaceSummary } from '@openarch/core';
 
 /**
@@ -23,6 +23,13 @@ export interface ModelRepository {
   getSnapshot?(modelId: string, snapshotId: string): Promise<Model>;
   restoreSnapshot?(modelId: string, snapshotId: string): Promise<Model>;
   createSnapshot?(modelId: string, label?: string): Promise<unknown>;
+  /** Server-mode member management (owner). */
+  getMembers?(modelId: string): Promise<{ members: WorkspaceMember[]; groupRoles: GroupRole[] }>;
+  saveMembers?(
+    modelId: string,
+    members: WorkspaceMember[],
+    groupRoles: GroupRole[],
+  ): Promise<{ members: WorkspaceMember[]; groupRoles: GroupRole[] }>;
   /** Server-mode governance: approvals and check waivers. */
   listApprovals?(modelId: string): Promise<unknown[]>;
   recordApproval?(modelId: string, baselineId: string, decision: 'approved' | 'rejected', comment?: string): Promise<unknown>;

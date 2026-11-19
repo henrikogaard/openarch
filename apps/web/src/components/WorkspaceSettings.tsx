@@ -9,9 +9,20 @@ import {
   type ModelPurpose,
   type WorkspaceStatus,
 } from '@openarch/core';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from '../i18n';
 import type { ConnectorConfig } from '@openarch/connectors';
+
+export interface MemberDraft {
+  subject: string;
+  role: 'owner' | 'editor' | 'viewer';
+  displayName?: string;
+}
+
+export interface GroupRoleDraft {
+  group: string;
+  role: 'owner' | 'editor' | 'viewer';
+}
 
 interface WorkspaceSettingsProps {
   model: Model;
@@ -19,6 +30,11 @@ interface WorkspaceSettingsProps {
   onConnectorsChange?: (config: ConnectorConfig) => void;
   serverOrgId?: string | null;
   onSetOrg?: (orgId: string | null) => void;
+  /** Present in server mode: loads and saves workspace members. */
+  membersManager?: {
+    load: () => Promise<{ members: MemberDraft[]; groupRoles: GroupRoleDraft[] }>;
+    save: (members: MemberDraft[], groupRoles: GroupRoleDraft[]) => Promise<void>;
+  } | null;
   onUpdate: (patch: Partial<Model>) => void;
   onBack: () => void;
   onDuplicate: () => void;
@@ -38,6 +54,7 @@ export default function WorkspaceSettings({
   onConnectorsChange,
   serverOrgId,
   onSetOrg,
+  membersManager = null,
   onUpdate,
   onBack,
   onDuplicate,
@@ -45,6 +62,51 @@ export default function WorkspaceSettings({
   onDelete,
 }: WorkspaceSettingsProps) {
   const t = useTranslation();
+  const [members, setMembers] = useState<MemberDraft[]>([]);
+  const [groupRoles, setGroupRoles] = useState<GroupRoleDraft[]>([]);
+  const [memberSubject, setMemberSubject] = useState('');
+  const [memberRole, setMemberRole] = useState<'owner' | 'editor' | 'viewer'>('editor');
+  const [groupRoleGroup, setGroupRoleGroup] = useState('');
+  const [groupRoleRole, setGroupRoleRole] = useState<'owner' | 'editor' | 'viewer'>('viewer');
+  const [membersStatus, setMembersStatus] = useState('');
+
+  useEffect(() => {
+    if (!membersManager) return;
+    let cancelled = false;
+    membersManager
+      .load()
+      .then((next) => {
+        if (cancelled) return;
+        setMembers(
+          (next.members ?? []).map((member) => ({
+            subject: member.subject,
+            role: member.role,
+            displayName: member.displayName,
+          })),
+        );
+        setGroupRoles(
+          (next.groupRoles ?? []).map((mapping) => ({ group: mapping.group, role: mapping.role })),
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) setMembersStatus(`Could not load members: ${error.message}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per manager instance
+  }, [membersManager]);
+
+  const saveMembers = async () => {
+    if (!membersManager) return;
+    setMembersStatus('');
+    try {
+      await membersManager.save(members, groupRoles);
+      setMembersStatus('Members updated');
+    } catch (error) {
+      setMembersStatus(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   const [name, setName] = useState(primaryText(model.name));
   const [description, setDescription] = useState(primaryText(model.documentation));
   const [owner, setOwner] = useState(model.owner ?? '');
@@ -307,6 +369,149 @@ export default function WorkspaceSettings({
             </label>
           </div>
         </section>
+
+        {membersManager && (
+          <section className="panel-card wide">
+            <h3>{t('members')}</h3>
+            <table className="relation-list">
+              <tbody>
+                {members.map((member, index) => (
+                  <tr key={member.subject + index}>
+                    <td>
+                      <input
+                        className="form-input"
+                        value={member.subject}
+                        aria-label={t('subject')}
+                        onChange={(event) => {
+                          const next = [...members];
+                          next[index] = { ...member, subject: event.target.value };
+                          setMembers(next);
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={member.role}
+                        onChange={(event) => {
+                          const next = [...members];
+                          next[index] = { ...member, role: event.target.value as MemberDraft['role'] };
+                          setMembers(next);
+                        }}
+                      >
+                        <option value="owner">owner</option>
+                        <option value="editor">editor</option>
+                        <option value="viewer">viewer</option>
+                      </select>
+                    </td>
+                    <td>
+                      <button
+                        className="small-button"
+                        onClick={() => setMembers(members.filter((_, i) => i !== index))}
+                      >
+                        {t('remove')}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="field-row">
+              <input
+                className="form-input"
+                placeholder={t('subject')}
+                value={memberSubject}
+                onChange={(event) => setMemberSubject(event.target.value)}
+              />
+              <select value={memberRole} onChange={(event) => setMemberRole(event.target.value as MemberDraft['role'])}>
+                <option value="owner">owner</option>
+                <option value="editor">editor</option>
+                <option value="viewer">viewer</option>
+              </select>
+              <button
+                className="small-button"
+                disabled={!memberSubject.trim()}
+                onClick={() => {
+                  setMembers([...members, { subject: memberSubject.trim(), role: memberRole }]);
+                  setMemberSubject('');
+                }}
+              >
+                {t('addMember')}
+              </button>
+            </div>
+            <h4>{t('checkWaivers')}</h4>
+            <table className="relation-list">
+              <tbody>
+                {groupRoles.map((mapping, index) => (
+                  <tr key={mapping.group + index}>
+                    <td>
+                      <input
+                        className="form-input"
+                        value={mapping.group}
+                        aria-label={t('subject')}
+                        onChange={(event) => {
+                          const next = [...groupRoles];
+                          next[index] = { ...mapping, group: event.target.value };
+                          setGroupRoles(next);
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={mapping.role}
+                        onChange={(event) => {
+                          const next = [...groupRoles];
+                          next[index] = { ...mapping, role: event.target.value as GroupRoleDraft['role'] };
+                          setGroupRoles(next);
+                        }}
+                      >
+                        <option value="owner">owner</option>
+                        <option value="editor">editor</option>
+                        <option value="viewer">viewer</option>
+                      </select>
+                    </td>
+                    <td>
+                      <button
+                        className="small-button"
+                        onClick={() => setGroupRoles(groupRoles.filter((_, i) => i !== index))}
+                      >
+                        {t('remove')}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="field-row">
+              <input
+                className="form-input"
+                placeholder="admins-group"
+                value={groupRoleGroup}
+                onChange={(event) => setGroupRoleGroup(event.target.value)}
+              />
+              <select value={groupRoleRole} onChange={(event) => setGroupRoleRole(event.target.value as GroupRoleDraft['role'])}>
+                <option value="owner">owner</option>
+                <option value="editor">editor</option>
+                <option value="viewer">viewer</option>
+              </select>
+              <button
+                className="small-button"
+                disabled={!groupRoleGroup.trim()}
+                onClick={() => {
+                  setGroupRoles([...groupRoles, { group: groupRoleGroup.trim(), role: groupRoleRole }]);
+                  setGroupRoleGroup('');
+                }}
+              >
+                {t('addWaiver')}
+              </button>
+            </div>
+            <div className="settings-actions">
+              <button className="primary-button" onClick={() => void saveMembers()}>
+                {t('save')}
+              </button>
+              <span className="muted">{membersStatus}</span>
+            </div>
+          </section>
+        )}
 
         <section className="panel-card wide">
           <h3>{t('lifecycle')}</h3>

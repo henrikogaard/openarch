@@ -53,7 +53,7 @@ export default function Inspector({
     return (
       <aside className="inspector empty-inspector">
         <h3>{t('inspector')}</h3>
-        <p>Select an element in the canvas or catalogue to see its details.</p>
+        <p>{t('inspectorHint')}</p>
       </aside>
     );
   }
@@ -90,7 +90,7 @@ export default function Inspector({
       </section>
 
       <section>
-        <h4>External links</h4>
+        <h4>{t('externalLinks')}</h4>
         <ul className="relation-list">
           {linksOfElement(element).map((link) => {
             const url =
@@ -123,14 +123,14 @@ export default function Inspector({
             );
           })}
           {linksOfElement(element).length === 0 && (
-            <li className="empty">No links yet.</li>
+            <li className="empty">{t('noLinks')}</li>
           )}
         </ul>
         <div className="field-row">
           <select value={linkSystem} onChange={(event) => setLinkSystem(event.target.value as LinkSystem)}>
-            <option value="jira">Jira issue</option>
-            <option value="confluence">Confluence page</option>
-            <option value="servicenow">ServiceNow CI</option>
+            <option value="jira">{t('jiraIssue')}</option>
+            <option value="confluence">{t('confluencePage')}</option>
+            <option value="servicenow">{t('serviceNowCi')}</option>
           </select>
           <input
             className="form-input"
@@ -157,7 +157,7 @@ export default function Inspector({
       </section>
 
       <section>
-        <h4>Placement</h4>
+        <h4>{t('placement')}</h4>
         <div className="field-row">
           <label className="field">
             Domain
@@ -228,7 +228,7 @@ export default function Inspector({
               />
               <button
                 className="icon-button"
-                title="Remove property"
+                title={t('removeProperty')}
                 onClick={() => updateProperties(element.properties.filter((_, i) => i !== index))}
               >
                 ×
@@ -265,7 +265,7 @@ export default function Inspector({
       </section>
 
       <section className="mono inspector-id">
-        <h4>Identifier</h4>
+        <h4>{t('identifier')}</h4>
         {element.id}
       </section>
     </aside>

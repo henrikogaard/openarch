@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from '../i18n';
 
 export interface GitConfig {
   owner: string;
@@ -18,6 +19,7 @@ interface GitConfigDialogProps {
  * `architecture/<workspace>.json` and committed via the Contents API).
  */
 export default function GitConfigDialog({ onConnect, onCancel }: GitConfigDialogProps) {
+  const t = useTranslation();
   const [owner, setOwner] = useState('');
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('main');
@@ -26,10 +28,10 @@ export default function GitConfigDialog({ onConnect, onCancel }: GitConfigDialog
   const valid = owner.trim() && repo.trim() && branch.trim() && token.trim();
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Connect Git repository" onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}>
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('connectGit')} onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}>
       <div className="modal">
         <header className="modal-header">
-          <h2>Connect Git repository</h2>
+          <h2>{t('connectGit')}</h2>
           <button className="icon-button" onClick={onCancel} aria-label="Close">
             ×
           </button>
@@ -40,20 +42,20 @@ export default function GitConfigDialog({ onConnect, onCancel }: GitConfigDialog
             token is used for this session only and is never persisted.
           </p>
           <label className="field">
-            Owner / organisation
+            {t('ownerOrganisation')}
             <input className="form-input full" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="my-org" autoFocus />
           </label>
           <label className="field">
-            Repository
+            {t('repositoryLabel')}
             <input className="form-input full" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="architecture-repo" />
           </label>
           <div className="field-row">
             <label className="field">
-              Branch
+              {t('branchLabel')}
               <input className="form-input full" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
             </label>
             <label className="field">
-              Token (contents: read/write)
+              {t('tokenContents')}
               <input
                 className="form-input full"
                 type="password"
@@ -66,13 +68,13 @@ export default function GitConfigDialog({ onConnect, onCancel }: GitConfigDialog
           </div>
         </div>
         <footer className="modal-footer">
-          <button onClick={onCancel}>Cancel</button>
+          <button onClick={onCancel}>{t('cancel')}</button>
           <button
             className="primary-button"
             disabled={!valid}
             onClick={() => onConnect({ owner: owner.trim(), repo: repo.trim(), branch: branch.trim(), token: token.trim() })}
           >
-            Connect
+            {t('connect')}
           </button>
         </footer>
       </div>

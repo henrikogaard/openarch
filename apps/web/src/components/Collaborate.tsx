@@ -10,6 +10,7 @@ import {
 } from '@openarch/core';
 import { type ServerRepository } from '@openarch/repository';
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from '../i18n';
 
 interface CollaborateProps {
   modelId: string;
@@ -26,6 +27,7 @@ interface SnapshotMeta {
 }
 
 export default function Collaborate({ modelId, model, repository, onRestore }: CollaborateProps) {
+  const t = useTranslation();
   const [comments, setComments] = useState<Comment[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
@@ -72,7 +74,7 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
         <header className="page-header">
           <div>
             <h2>Collaborate</h2>
-            <p>Comments, baselines, and audit are available when using the self-hosted server.</p>
+            <p>{t('serverCollabHint')}</p>
           </div>
         </header>
         <div className="panel-card">Switch to <strong>Server</strong> mode in the sidebar to enable collaboration features.</div>
@@ -164,19 +166,19 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
       <header className="page-header">
         <div>
           <h2>Collaborate</h2>
-          <p>Optimistic locking, comments, baselines, and audit history.</p>
+          <p>{t('collaborateSubtitle')}</p>
         </div>
-        <button onClick={createSnapshot}>Create baseline</button>
+        <button onClick={createSnapshot}>{t('createBaseline')}</button>
       </header>
       {error && <div className="panel-card danger">{error}</div>}
 
       <div className="dashboard-grid">
         <section className="panel-card">
-          <h3>Comments</h3>
+          <h3>{t('commentsHeading')}</h3>
           <div className="comment-compose">
             <textarea
               value={draft}
-              placeholder="Leave a comment…"
+              placeholder={t('leaveComment')}
               onChange={(event) => setDraft(event.target.value)}
             />
             <button onClick={addComment} disabled={!draft.trim()}>
@@ -191,12 +193,12 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
                 <p>{comment.body}</p>
               </li>
             ))}
-            {comments.length === 0 && <li className="empty">No comments yet.</li>}
+            {comments.length === 0 && <li className="empty">{t('noComments')}</li>}
           </ul>
         </section>
 
         <section className="panel-card">
-          <h3>Version history & baselines</h3>
+          <h3>{t('versionHistory')}</h3>
           <ul className="relation-list">
             {snapshots.map((snapshot) => (
               <li key={snapshot.id}>
@@ -205,25 +207,25 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
                   v{snapshot.version} · {new Date(snapshot.createdAt).toLocaleString()}
                 </span>
                 <button className="small-button" disabled={busy === snapshot.id} onClick={() => void showDiff(snapshot)}>
-                  {snapshotDiffs[snapshot.id] ? 'Hide diff' : 'Diff vs current'}
+                  {snapshotDiffs[snapshot.id] ? t('hideDiff') : t('diffVsCurrent')}
                 </button>
                 <button className="small-button" disabled={busy === snapshot.id} onClick={() => void restore(snapshot)}>
-                  Restore
+                  {t('restore')}
                 </button>
                 <button
                   className="small-button"
                   disabled={busy === snapshot.id || approvals.some((a) => a.baselineId === snapshot.id)}
                   onClick={() => void approve(snapshot, 'approved')}
-                  title="Approve this snapshot as the baseline"
+                  title={t('approveBaselineTitle')}
                 >
-                  Approve
+                  {t('approve')}
                 </button>
                 <button
                   className="small-button"
                   disabled={busy === snapshot.id || approvals.some((a) => a.baselineId === snapshot.id)}
                   onClick={() => void approve(snapshot, 'rejected')}
                 >
-                  Reject
+                  {t('reject')}
                 </button>
                 {snapshotDiffs[snapshot.id] && (
                   <pre className="diff-block">
@@ -248,7 +250,7 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
         </section>
 
         <section className="panel-card">
-          <h3>Approvals</h3>
+          <h3>{t('approvalsHeading')}</h3>
           <ul className="relation-list">
             {approvals.map((approval) => (
               <li key={approval.id}>
@@ -261,39 +263,39 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
                 <time>{new Date(approval.createdAt).toLocaleString()}</time>
               </li>
             ))}
-            {approvals.length === 0 && <li className="empty">No approvals yet — approve a snapshot above.</li>}
+            {approvals.length === 0 && <li className="empty">{t('noApprovals')}</li>}
           </ul>
           {model.baselineId && (
-            <p className="muted">Current approved baseline: {model.baselineId.slice(0, 24)}…</p>
+            <p className="muted">{t('currentApprovedBaseline')} {model.baselineId.slice(0, 24)}…</p>
           )}
         </section>
 
         <section className="panel-card">
-          <h3>Check waivers</h3>
+          <h3>{t('checkWaivers')}</h3>
           <ul className="relation-list">
             {waivers.map((waiver) => (
               <li key={waiver.id}>
                 <span className="chip">{waiver.rule}</span>
                 <span>{waiver.reason}</span>
                 <button className="small-button" onClick={() => void removeWaiver(waiver)}>
-                  Remove
+                  {t('remove')}
                 </button>
               </li>
             ))}
             {waivers.length === 0 && (
-              <li className="empty">No waivers — `openarch check` findings can be waived here.</li>
+              <li className="empty">{t('noWaivers')}</li>
             )}
           </ul>
           <div className="field-row">
             <input
               className="form-input"
-              placeholder="rule (e.g. element-without-domain)"
+              placeholder={t('rule')}
               value={waiverRule}
               onChange={(event) => setWaiverRule(event.target.value)}
             />
             <input
               className="form-input"
-              placeholder="reason"
+              placeholder={t('reason')}
               value={waiverReason}
               onChange={(event) => setWaiverReason(event.target.value)}
             />
@@ -302,13 +304,13 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
               disabled={!waiverRule.trim() || !waiverReason.trim()}
               onClick={() => void addWaiver()}
             >
-              Add waiver
+              {t('addWaiver')}
             </button>
           </div>
         </section>
 
         <section className="panel-card wide">
-          <h3>Audit log</h3>
+          <h3>{t('auditLog')}</h3>
           <ul className="audit-list">
             {audit.map((event) => (
               <li key={event.id}>
@@ -318,7 +320,7 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
                 <time>{new Date(event.createdAt).toLocaleString()}</time>
               </li>
             ))}
-            {audit.length === 0 && <li className="empty">No activity recorded.</li>}
+            {audit.length === 0 && <li className="empty">{t('noActivity')}</li>}
           </ul>
         </section>
       </div>

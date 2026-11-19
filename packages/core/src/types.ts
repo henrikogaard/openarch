@@ -304,6 +304,12 @@ export interface WorkspaceMember {
   displayName?: string;
 }
 
+/** Maps a security group (e.g. an OIDC groups claim) to a workspace role. */
+export interface GroupRole {
+  group: string;
+  role: WorkspaceRole;
+}
+
 export interface ModelEnvelope {
   model: Model;
   version: number;

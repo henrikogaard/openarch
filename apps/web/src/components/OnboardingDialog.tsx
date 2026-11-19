@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from '../i18n';
 
 interface OnboardingDialogProps {
   onCreate: () => void;
@@ -23,13 +24,14 @@ const STEPS = [
 
 /** First-run welcome; shown once per browser (localStorage flag). */
 export default function OnboardingDialog({ onCreate, onImport, onDismiss }: OnboardingDialogProps) {
+  const t = useTranslation();
   const [step, setStep] = useState(0);
   const current = STEPS[step];
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Welcome to OpenArch">
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('welcome')}>
       <div className="modal">
         <header className="modal-header">
-          <h2>Welcome to OpenArch</h2>
+          <h2>{t('welcome')}</h2>
           <button className="icon-button" onClick={onDismiss} aria-label="Close">
             ×
           </button>
@@ -43,7 +45,7 @@ export default function OnboardingDialog({ onCreate, onImport, onDismiss }: Onbo
                 key={index}
                 className={`small-button ${index === step ? 'active' : ''}`}
                 onClick={() => setStep(index)}
-                aria-label={`Step ${index + 1}`}
+                aria-label={`${t('step')} ${index + 1}`}
               >
                 {index + 1}
               </button>
@@ -51,9 +53,9 @@ export default function OnboardingDialog({ onCreate, onImport, onDismiss }: Onbo
           </div>
         </div>
         <footer className="modal-footer">
-          <button onClick={onImport}>Import a file</button>
+          <button onClick={onImport}>{t('importFile')}</button>
           <button className="primary-button" onClick={onCreate}>
-            Create a workspace
+            {t('createWorkspace')}
           </button>
         </footer>
       </div>
