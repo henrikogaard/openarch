@@ -15,6 +15,7 @@ import {
   getRelationshipType,
   impactAnalysis,
   isAllowedRelationship,
+  layoutView,
   parseAoef,
   primaryText,
   searchModel,
@@ -31,6 +32,7 @@ import {
   type ViewEdge,
   type ViewNode,
 } from '@openarch/core';
+import { exportViewSvg } from '@openarch/exporters';
 import {
   modelToMarkdown,
   sanitizeAiText,
@@ -250,6 +252,51 @@ export const TOOLS: ToolDescriptor[] = [
       'Run structural and AI-oriented validation: unknown/duplicate ids and names, dangling references and illegal ArchiMate relationships. Call after every batch of write tools.',
     inputSchema: obj({ modelId: MODEL_ID }, ['modelId']),
     outputSchema: OBJECT_OUTPUT,
+    annotations: READ_ONLY,
+  },
+  {
+    name: 'auto_layout_view',
+    title: 'Auto-layout a view',
+    description:
+      'Deterministically re-arrange a view: grid mode packs nodes in reading order, layers mode orders nodes by relationship direction (sources left, sinks right). The same input always produces the same layout.',
+    inputSchema: obj(
+      {
+        modelId: MODEL_ID,
+        viewId: { type: 'string', description: 'View to lay out (defaults to the first view).' },
+        mode: { type: 'string', description: 'grid or layers', enum: ['grid', 'layers'] },
+      },
+      ['modelId'],
+    ),
+    annotations: WRITE,
+  },
+  {
+    name: 'get_validation_issues',
+    title: 'Get validation issues by severity',
+    description:
+      'List validation issues for a model, filterable by severity. Unlike validate_model (which returns counts plus issues), this tool focuses on actionable, filterable lists per rule.',
+    inputSchema: obj(
+      {
+        modelId: MODEL_ID,
+        severity: { type: 'string', description: 'error, warning, or info', enum: ['error', 'warning', 'info'] },
+      },
+      ['modelId'],
+    ),
+    annotations: READ_ONLY,
+  },
+  {
+    name: 'render_view_svg',
+    title: 'Render a view as SVG text',
+    description:
+      'Render a view to an SVG string (connected agent can attach it for human review). Output may be large; the SVG is model text (safe under the validation-first policies).',
+    inputSchema: obj({ modelId: MODEL_ID, viewId: { type: 'string', description: 'Optional view id.' } }, ['modelId']),
+    outputSchema: {
+      type: 'object',
+      properties: {
+        svg: { type: 'string', description: 'The SVG markup' },
+        truncated: { type: 'boolean', description: 'true when the SVG hit the size cap' },
+      },
+      required: ['svg'],
+    },
     annotations: READ_ONLY,
   },
   {
@@ -1874,6 +1921,15 @@ export async function callTool(
       case 'validate_model':
         value = await validateModelTool(args, store);
         break;
+      case 'auto_layout_view':
+        value = await autoLayoutViewTool(args, store);
+        break;
+      case 'get_validation_issues':
+        value = await getValidationIssuesTool(args, store);
+        break;
+      case 'render_view_svg':
+        value = await renderViewSvgTool(args, store);
+        break;
       case 'get_aoef_format_guide':
         value = AOEF_FORMAT_GUIDE;
         break;
@@ -1959,4 +2015,66 @@ export async function callTool(
   } catch (error) {
     return errorResult(error);
   }
+}
+
+const SVG_MAX_CHARS = 200_000;
+
+async function autoLayoutViewTool(args: Record<string, unknown>, store: ModelStore): Promise<unknown> {
+  const model = await getModelOrThrow(store, stringArg(args, 'modelId'));
+  const viewId = optionalString(args, 'viewId');
+  const mode = optionalString(args, 'mode') === 'layers' ? 'layers' : 'grid';
+  const view = (viewId ? model.views.find((candidate) => candidate.id === viewId) : model.views[0]);
+  if (!view) fail({ error: 'The model has no views to lay out.', suggestion: 'Use create_view.' });
+  const order = view.nodes.map((node) => node.id);
+  const laid = layoutView(order, view.edges, { mode });
+  let updated = 0;
+  for (const node of view.nodes) {
+    const bounds = laid.get(node.id);
+    if (!bounds) continue;
+    node.bounds = bounds;
+    updated += 1;
+  }
+  await store.saveModel(model);
+  return {
+    modelId: model.id,
+    viewId: view.id,
+    mode,
+    laidOut: updated,
+    note: 'Deterministic layout applied; bounds written back and validated by the store gate.',
+  };
+}
+
+async function getValidationIssuesTool(args: Record<string, unknown>, store: ModelStore): Promise<unknown> {
+  const model = await getModelOrThrow(store, stringArg(args, 'modelId'));
+  const severity = optionalString(args, 'severity');
+  const all = validateModel(model);
+  const filtered = severity
+    ? all.filter((issue) => issue.severity === severity)
+    : all;
+  const byRule = new Map<string, number>();
+  for (const issue of filtered) {
+    byRule.set(issue.rule, (byRule.get(issue.rule) ?? 0) + 1);
+  }
+  return {
+    modelId: model.id,
+    total: filtered.length,
+    byRule: Object.fromEntries([...byRule.entries()].sort((a, b) => b[1] - a[1])),
+    issues: filtered.slice(0, 100),
+  };
+}
+
+async function renderViewSvgTool(args: Record<string, unknown>, store: ModelStore): Promise<unknown> {
+  const model = await getModelOrThrow(store, stringArg(args, 'modelId'));
+  const viewId = optionalString(args, 'viewId');
+  const view = viewId
+    ? model.views.find((candidate) => candidate.id === viewId)
+    : model.views[0];
+  if (!view) fail({ error: 'The model has no views to render.', suggestion: 'Use create_view.' });
+  const svg = exportViewSvg(model, view.id);
+  const truncated = svg.length > SVG_MAX_CHARS;
+  return {
+    svg: truncated ? svg.slice(0, SVG_MAX_CHARS) : svg,
+    truncated,
+    viewId: view.id,
+  };
 }
