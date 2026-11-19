@@ -21,17 +21,18 @@ export function exportViewPng(model: Model, viewId: string, scale = 2): Promise<
     const image = new Image();
 
     image.onload = () => {
-      const width = image.naturalWidth || 1;
-      const height = image.naturalHeight || 1;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(width * scale));
-      canvas.height = Math.max(1, Math.round(height * scale));
+      try {
+        const width = image.naturalWidth || 1;
+        const height = image.naturalHeight || 1;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
 
-      const context = canvas.getContext('2d');
-      if (!context) {
-        reject(new Error('exportViewPng could not acquire a 2D canvas context.'));
-        return;
-      }
+        const context = canvas.getContext('2d');
+        if (!context) {
+          reject(new Error('exportViewPng could not acquire a 2D canvas context.'));
+          return;
+        }
 
       context.scale(scale, scale);
       context.drawImage(image, 0, 0, width, height);
@@ -39,6 +40,11 @@ export function exportViewPng(model: Model, viewId: string, scale = 2): Promise<
         if (blob) resolve(blob);
         else reject(new Error('exportViewPng: canvas.toBlob produced no blob.'));
       }, 'image/png');
+      } catch (error) {
+        // Oversized canvases throw synchronously in some engines — the
+        // promise must not hang forever.
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     };
 
     image.onerror = () => {

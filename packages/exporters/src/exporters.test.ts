@@ -1,4 +1,5 @@
 import type { ArchiElement, Model, Relationship, View } from '@openarch/core';
+import { createSampleModel } from '@openarch/core';
 import { describe, expect, it } from 'vitest';
 import { exportElementsCsv, exportRelationshipsCsv } from './csv';
 import { exportMermaid } from './mermaid';
@@ -104,5 +105,22 @@ describe('Mermaid export', () => {
     const mermaid = exportMermaid(model, 'v1');
     expect(mermaid).toContain('flowchart LR');
     expect(mermaid).toContain('Assignment');
+  });
+});
+
+describe('CSV formula injection', () => {
+  it('defuses cells that start with =, +, -, @', async () => {
+    const { exportElementsCsv } = await import('./csv');
+    const model = createSampleModel();
+    model.elements.push({
+      id: 'evil',
+      type: 'BusinessActor',
+      name: [{ lang: 'en', value: "=cmd|'/c calc'!A1" }],
+      documentation: [{ lang: 'en', value: '+SUM(A1:A9)' }],
+      properties: [],
+    });
+    const csv = exportElementsCsv(model);
+    expect(csv).toContain("'=cmd");
+    expect(csv).toContain("'+SUM");
   });
 });

@@ -2,6 +2,15 @@ import PptxGenJS from 'pptxgenjs';
 import { primaryText, type Model, type View } from '@openarch/core';
 import { elementLabel, workspaceName } from './report-data';
 
+/**
+ * XML 1.0 forbids most control characters — pptxgenjs escapes markup but
+ * passes them through raw (verified experimentally), so strip them here.
+ */
+function xmlSafeText(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+}
+
 /** Render the model as a slide deck: title slide + one slide per view with its elements and relationships. */
 export async function exportViewsPptx(model: Model): Promise<Uint8Array> {
   const pptx = new PptxGenJS();
@@ -22,7 +31,7 @@ export async function exportViewsPptx(model: Model): Promise<Uint8Array> {
     const slide = pptx.addSlide();
     slide.addText('Artefacts', { x: 0.6, y: 0.4, fontSize: 28, bold: true });
     slide.addText(
-      (model.artefacts ?? []).map((artefact) => `${artefact.kind.toUpperCase()}: ${artefact.title}`).join('\n'),
+      xmlSafeText((model.artefacts ?? []).map((artefact) => `${artefact.kind.toUpperCase()}: ${artefact.title}`).join('\n')),
       { x: 0.6, y: 1.2, fontSize: 14 },
     );
   }
@@ -32,14 +41,14 @@ export async function exportViewsPptx(model: Model): Promise<Uint8Array> {
 
 function addViewSlide(pptx: PptxGenJS, model: Model, view: View): void {
   const slide = pptx.addSlide();
-  slide.addText(primaryText(view.name) || view.id, { x: 0.6, y: 0.35, fontSize: 28, bold: true });
+  slide.addText(xmlSafeText(primaryText(view.name) || view.id), { x: 0.6, y: 0.35, fontSize: 28, bold: true });
   const nodes = view.nodes
     .map((node) => node.elementRef)
     .filter((id): id is string => Boolean(id))
     .map((id) => model.elements.find((element) => element.id === id))
     .filter((element) => Boolean(element));
   slide.addText(
-    nodes.map((element) => `• ${elementLabel(element!, element!.id)} (${element!.type})`).join('\n') || 'Empty view',
+    xmlSafeText(nodes.map((element) => `• ${elementLabel(element!, element!.id)} (${element!.type})`).join('\n')) || 'Empty view',
     { x: 0.6, y: 1.1, fontSize: 14, valign: 'top' },
   );
   const edgeLines = view.edges
@@ -48,7 +57,7 @@ function addViewSlide(pptx: PptxGenJS, model: Model, view: View): void {
       if (!relationship) return null;
       const source = model.elements.find((element) => element.id === relationship.source);
       const target = model.elements.find((element) => element.id === relationship.target);
-      return `${relationship.type}: ${elementLabel(source, relationship.source)} → ${elementLabel(target, relationship.target)}`;
+      return xmlSafeText(`${relationship.type}: ${elementLabel(source, relationship.source)} → ${elementLabel(target, relationship.target)}`);
     })
     .filter((line): line is string => Boolean(line));
   if (edgeLines.length) {

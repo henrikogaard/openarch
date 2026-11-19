@@ -52,7 +52,7 @@ export async function exportWorkspaceDocx(model: Model): Promise<Uint8Array> {
     new Paragraph({ text: 'Metadata', heading: HeadingLevel.HEADING_1 }),
     table(['Field', 'Value'], metadataRows(model)),
     new Paragraph({ text: 'Domains', heading: HeadingLevel.HEADING_1 }),
-    table(['Domain', 'Elements', 'Relationships', 'Cross-domain'], domainRows(model)),
+    table(['Domain', 'Owner', 'Elements', 'Relationships', 'Cross-domain'], domainRows(model)),
     new Paragraph({ text: 'Elements', heading: HeadingLevel.HEADING_1 }),
     table(
       ['Name', 'Type', 'Domain', 'Environment'],

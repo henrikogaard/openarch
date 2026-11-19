@@ -69,6 +69,8 @@ interface ImportCollections {
   relationships: Relationship[];
   views: View[];
   warnings: string[];
+  /** Archi 5+ property definitions map (id → name) for property resolution. */
+  definitionNames: Map<string, string>;
 }
 
 function asArray<T>(value: T | T[] | undefined | null): T[] {
@@ -126,14 +128,33 @@ function documentationOf(node: XmlNode): LocalizedText[] {
   return localized(text(node.documentation));
 }
 
-function parseProperties(node: XmlNode): Property[] {
+/**
+ * Read a model.xml entry by its identifier: either classic `<property
+ * key="…" value="…"/>` or Archi 5+ `<property propertyDefinitionRef="…">
+ * <value>…</value></property>` resolved against the model's
+ * `<propertyDefinitions>`.
+ */
+function parseProperties(node: XmlNode, definitionNames?: Map<string, string>): Property[] {
   const properties: Property[] = [];
   for (const container of nodes(node.properties)) {
     for (const raw of nodes(container.property)) {
       const key = attr(raw, 'key');
       const value = attr(raw, 'value');
-      if (!key && !value) continue;
-      properties.push({ key, value });
+      if (key && value !== undefined) {
+        properties.push({ key, value });
+        continue;
+      }
+      if (key) {
+        properties.push({ key, value });
+        continue;
+      }
+      // Archi 5+ shape: resolve the definition reference.
+      const reference = attr(raw, 'propertyDefinitionRef');
+      if (reference) {
+        const name = definitionNames?.get(reference) ?? reference;
+        const value5 = text(raw.value);
+        properties.push({ key: name, value: value5 });
+      }
     }
   }
   return properties;
@@ -156,6 +177,7 @@ function parseElement(
   raw: XmlNode,
   domainId: string | undefined,
   warnings: string[],
+  definitionNames?: Map<string, string>,
 ): ArchiElement {
   const id = attr(raw, 'id');
   const type = attr(raw, 'type');
@@ -171,7 +193,7 @@ function parseElement(
     type,
     name,
     documentation: documentationOf(raw),
-    properties: parseProperties(raw),
+    properties: parseProperties(raw, definitionNames),
   };
   if (domainId) element.domain = domainId;
   return element;
@@ -181,6 +203,7 @@ function parseRelationship(
   raw: XmlNode,
   archiType: string,
   warnings: string[],
+  definitionNames?: Map<string, string>,
 ): Relationship {
   const id = attr(raw, 'id');
   const type = archiType.slice(0, -RELATIONSHIP_SUFFIX.length);
@@ -200,7 +223,7 @@ function parseRelationship(
     target: attr(raw, 'target'),
     name,
     documentation: documentationOf(raw),
-    properties: parseProperties(raw),
+    properties: parseProperties(raw, definitionNames),
   };
   const accessType = attr(raw, 'accessType');
   if (accessType) relationship.accessType = accessType;
@@ -214,9 +237,9 @@ function addConcept(
 ): void {
   const type = attr(raw, 'type');
   if (isRelationshipType(type)) {
-    out.relationships.push(parseRelationship(raw, type, out.warnings));
+    out.relationships.push(parseRelationship(raw, type, out.warnings, out.definitionNames));
   } else {
-    out.elements.push(parseElement(raw, domainId, out.warnings));
+    out.elements.push(parseElement(raw, domainId, out.warnings, out.definitionNames));
   }
 }
 
@@ -335,9 +358,34 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Defensive caps for untrusted archives (zip bombs decompress into memory). */
+const MAX_ARCHIVE_INPUT_BYTES = 50 * 1024 * 1024; // 50 MB input
+const MAX_ARCHIVE_ENTRIES = 2000;
+const MAX_ARCHIVE_TOTAL_UNCOMPRESSED = 200 * 1024 * 1024; // 200 MB
+
 function readArchive(bytes: Uint8Array): Record<string, Uint8Array> {
+  if (bytes.byteLength > MAX_ARCHIVE_INPUT_BYTES) {
+    throw new Error('Invalid Archi archive: input larger than 50 MB');
+  }
   try {
-    return unzipSync(bytes);
+    // fflate's filter receives each entry BEFORE it is inflated; refusing an
+    // entry there keeps oversized bombs from ever touching memory.
+    let totalOriginal = 0;
+    let entries = 0;
+    const files = unzipSync(bytes, {
+      filter: (file) => {
+        entries += 1;
+        totalOriginal += file.originalSize ?? 0;
+        if (entries > MAX_ARCHIVE_ENTRIES) {
+          throw new Error('Invalid Archi archive: too many entries');
+        }
+        if (totalOriginal > MAX_ARCHIVE_TOTAL_UNCOMPRESSED) {
+          throw new Error('Invalid Archi archive: decompressed size exceeds 200 MB');
+        }
+        return true;
+      },
+    });
+    return files;
   } catch (error) {
     throw new Error(`Invalid Archi archive: ${errorMessage(error)}`);
   }
@@ -408,6 +456,14 @@ export function importArchi(bytes: Uint8Array): ArchiImportResult {
     relationships: [],
     views: [],
     warnings: [],
+    definitionNames: new Map(
+      nodes(root.propertyDefinitions).flatMap((container) =>
+        nodes(container.propertyDefinition).map((definition) => [
+          attr(definition, 'id'),
+          attr(definition, 'name'),
+        ] as [string, string]),
+      ),
+    ),
   };
 
   for (const folder of nodes(root.folder)) {
@@ -421,7 +477,7 @@ export function importArchi(bytes: Uint8Array): ArchiImportResult {
     id: attr(root, 'id') || undefined,
     name: name.length ? name : undefined,
     documentation: documentationOf(root),
-    properties: parseProperties(root),
+    properties: parseProperties(root, out.definitionNames),
     elements: out.elements,
     relationships: out.relationships,
     views: out.views,

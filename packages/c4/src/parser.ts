@@ -4,13 +4,15 @@ const KINDS = ['person', 'softwareSystem', 'container', 'component'] as const;
 type Kind = (typeof KINDS)[number];
 
 function unquote(value: string): string {
-  return value.replace(/^"|"$/g, '');
+  // DSL escapes: \" inside strings. The exporter writes \" — the reader must
+  // understand it or round-trips corrupt on any quoted name.
+  return value.replace(/^"|"$/g, '').replace(/\\"/g, '"');
 }
 
-/** Split a line into tokens, respecting double-quoted strings. */
+/** Split a line into tokens, respecting double-quoted strings with escapes. */
 function tokenize(line: string): string[] {
   const tokens: string[] = [];
-  const regex = /"([^"]*)"|(\S+)/g;
+  const regex = /"((?:[^"\\]|\\.)*)"|(\S+)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(line)) !== null) {
     tokens.push(match[1] !== undefined ? `"${match[1]}"` : match[2]);
@@ -18,16 +20,34 @@ function tokenize(line: string): string[] {
   return tokens;
 }
 
+/** Strip comments OUTSIDE quoted strings (URLs contain // legitimately). */
 function stripComment(line: string): string {
-  const hash = line.indexOf('#');
-  const slash = line.indexOf('//');
-  const cut = [hash, slash].filter((index) => index >= 0);
-  return (cut.length ? line.slice(0, Math.min(...cut)) : line).trim();
+  let inString = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"' && line[i - 1] !== '\\') inString = !inString;
+    if (inString) continue;
+    if (char === '#' || (char === '/' && line[i + 1] === '/')) {
+      return line.slice(0, i).trim();
+    }
+  }
+  return line.trim();
 }
 
 function camelId(name: string): string {
   const cleaned = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return cleaned || 'element';
+}
+
+/** Auto ids must be unique across kinds: person "X" + softwareSystem "X". */
+function uniqueElementId(model: C4Model, base: string): string {
+  let id = base;
+  let suffix = 2;
+  while (model.elements.some((element) => element.id === id)) {
+    id = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return id;
 }
 
 /**
@@ -97,24 +117,37 @@ export function parseStructurizr(dsl: string): C4Model {
       continue;
     }
 
-    // Relationship: a -> b "label" "technology"?
+    // Relationship: a -> b "label" "technology"? — chained arrows
+    // (a -> b -> c, legal DSL) are consumed hop by hop.
     const arrow = body.indexOf('->');
     if (arrow > 0) {
-      const source = body[arrow - 1];
-      const target = body[arrow + 1];
-      if (!source || !target) continue;
-      const quoted = body.slice(arrow + 2).filter((token) => token.startsWith('"'));
-      const relationship: C4Relationship = {
-        source,
-        target,
-        label: quoted[0] ? unquote(quoted[0]) : '',
-        technology: quoted[1] ? unquote(quoted[1]) : undefined,
-      };
-      if (currentView) {
-        currentView.relationships.push({ source, target });
-        for (const id of [source, target]) if (!currentView.elements.includes(id)) currentView.elements.push(id);
-      } else {
-        model.relationships.push(relationship);
+      let currentSource: string | undefined = body[arrow - 1];
+      let i = arrow + 1;
+      while (currentSource && i < body.length) {
+        const target: string | undefined = body[i];
+        if (!target) break;
+        // Quoted args for THIS hop: everything up to the next ->.
+        const rest: string[] = [];
+        let j = i + 1;
+        while (j < body.length && body[j] !== '->') rest.push(body[j++]);
+        const quoted = rest.filter((token: string) => token.startsWith('"'));
+        const relationship: C4Relationship = {
+          source: currentSource,
+          target,
+          label: quoted[0] ? unquote(quoted[0]) : '',
+          technology: quoted[1] ? unquote(quoted[1]) : undefined,
+        };
+        if (currentView) {
+          currentView.relationships.push({ source: currentSource, target });
+          for (const id of [currentSource, target]) {
+            if (!currentView.elements.includes(id)) currentView.elements.push(id);
+          }
+        } else {
+          model.relationships.push(relationship);
+        }
+        if (j >= body.length) break;
+        currentSource = target;
+        i = j + 1;
       }
       continue;
     }
@@ -150,7 +183,7 @@ export function parseStructurizr(dsl: string): C4Model {
     }
     const quoted = strings.filter((token) => token.startsWith('"'));
     const element: C4Element = {
-      id: elementId ?? camelId(unquote(quoted[0] ?? kind)),
+      id: elementId ?? uniqueElementId(model, camelId(unquote(quoted[0] ?? kind))),
       kind: kind as Kind,
       name: unquote(quoted[0] ?? kind),
       description: quoted[1] ? unquote(quoted[1]) : '',

@@ -66,3 +66,49 @@ describe('Structurizr DSL bridge', () => {
     expect(dsl).toContain('customer = person "Customer"');
   });
 });
+
+describe('C4 DSL hostile-input round trips', () => {
+  it('round-trips quoted names, URLs, hashes, and chained arrows', () => {
+    const dsl = `
+      workspace "W \"quoted\"" {
+        model {
+          user = person "User #1" "Uses https://api.example.com // not a comment"
+          sys = softwareSystem "Sys" ""
+          db = container "db" ""
+          user -> sys -> db "chained" "https"
+          sys -> db "reads"
+          sys -> db "writes"
+        }
+        views {
+          systemContext "ctx" "C" {
+            include *
+          }
+        }
+      }
+    `;
+    const parsed = parseStructurizr(dsl);
+    expect(parsed.elements.map((e) => e.id).sort()).toEqual(['db', 'sys', 'user']);
+    expect(parsed.elements[0].name).toBe('User #1');
+    expect(parsed.elements[0].description).toContain('https://api.example.com'); // not eaten by //
+    // A chain a -> b -> c yields two hops; plus reads + writes = 4 total.
+    expect(parsed.relationships.length).toBe(4);
+    expect(parsed.relationships[0]).toMatchObject({ source: 'user', target: 'sys' });
+    expect(parsed.relationships[1]).toMatchObject({ source: 'sys', target: 'db', label: 'chained' });
+    // Same-pair duplicates (reads + writes) must not collide.
+    const model = c4ToModel(parsed);
+    expect(model.relationships.length).toBe(4);
+    expect(new Set(model.relationships.map((r) => r.id)).size).toBe(4);
+  });
+
+  it('disambiguates same-name elements across kinds instead of colliding', () => {
+    const parsed = parseStructurizr(`
+      workspace "W" {
+        model {
+          person "Customer" ""
+          softwareSystem "Customer" ""
+        }
+      }
+    `);
+    expect(parsed.elements.map((e) => e.id).sort()).toEqual(['customer', 'customer-2']);
+  });
+});

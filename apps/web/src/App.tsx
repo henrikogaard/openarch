@@ -201,10 +201,9 @@ export default function App() {
     try {
       const { exportWorkspaceHtml } = await import('@openarch/reporting');
       const pageId = await publishToConfluence(
-        connectors,
+        { ...connectors, confluenceSpaceKey: connectors.confluenceSpaceKey },
         `${primaryText(model.name)} — ${primaryText(currentView.name)}`,
         exportWorkspaceHtml(model),
-        'ARCH',
       );
       notify(`Published to Confluence (page ${pageId})`);
     } catch (error) {

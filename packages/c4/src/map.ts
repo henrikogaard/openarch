@@ -16,7 +16,6 @@ export function c4RelationshipType(label: string): string {
   if (normalized.includes('contain')) return 'Composition';
   return 'Association';
 }
-
 function c4ElementToArchi(c4: C4Element, index: number): ArchiElement {
   const properties = [{ key: 'source', value: 'c4' }, { key: 'c4Kind', value: c4.kind }];
   if (c4.technology) properties.push({ key: 'technology', value: c4.technology });
@@ -34,12 +33,23 @@ function c4ElementToArchi(c4: C4Element, index: number): ArchiElement {
   };
 }
 
-function c4RelationshipToArchi(rel: C4Relationship, elementIds: Map<string, string>): Relationship | null {
+function c4RelationshipToArchi(
+  rel: C4Relationship,
+  elementIds: Map<string, string>,
+  pairCounts: Map<string, number>,
+): Relationship | null {
   const source = elementIds.get(rel.source);
   const target = elementIds.get(rel.target);
   if (!source || !target || source === target) return null;
+  // Two relationships between the same pair are legal (reads + writes) —
+  // the id must not collide. Disambiguation is DETERMINISTIC (first
+  // occurrence is bare, repeats get -2, -3, …) so re-imports stay stable.
+  const pair = `${rel.source}\u0000${rel.target}`;
+  const occurrence = (pairCounts.get(pair) ?? 0) + 1;
+  pairCounts.set(pair, occurrence);
+  const suffix = occurrence === 1 ? '' : `-${occurrence}`;
   return {
-    id: `c4rel-${rel.source}-${rel.target}`,
+    id: `c4rel-${rel.source}-${rel.target}${suffix}`,
     type: c4RelationshipType(rel.label),
     source,
     target,
@@ -57,8 +67,9 @@ function gridPosition(index: number): { x: number; y: number } {
 export function c4ToModel(c4: C4Model): Model {
   const elements = c4.elements.map((element, index) => c4ElementToArchi(element, index));
   const elementIds = new Map(c4.elements.map((element, index) => [element.id, elements[index].id]));
+  const pairCounts = new Map<string, number>();
   const relationships = c4.relationships
-    .map((rel) => c4RelationshipToArchi(rel, elementIds))
+    .map((rel) => c4RelationshipToArchi(rel, elementIds, pairCounts))
     .filter((rel): rel is Relationship => Boolean(rel));
 
   const views: View[] = c4.views.map((view, viewIndex) => {
