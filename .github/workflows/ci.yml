@@ -21,7 +21,43 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # Bundle budget: keep the eagerly-loaded JS under 1.4 MB (entry+vendor+flow)
+      - name: Enforce bundle budget
+        run: |
+          node --input-type=module -e "
+          import { readdirSync, statSync } from 'node:fs';
+          import { join } from 'node:path';
+          const dist = 'apps/web/dist/assets';
+          const eager = ['index', 'vendor', 'flow'];
+          const bytes = readdirSync(dist)
+            .filter((file) => eager.some((name) => file.startsWith(name)) && file.endsWith('.js'))
+            .reduce((total, file) => total + statSync(join(dist, file)).size, 0);
+          const limit = 1_450_000;
+          console.log('eager JS:', (bytes / 1024).toFixed(0), 'KiB; budget:', (limit / 1024).toFixed(0), 'KiB');
+          if (bytes > limit) { console.error('Bundle budget exceeded'); process.exit(1); }
+          "
       # E2E smoke test: create → add → connect → bulk-assign → delete → reload → export AOEF.
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+
+  e2e-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y libxml2-utils
+      - run: npm ci
+      - run: npm run build
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      # E2E against the built app served by the API server (server mode):
+      # exercises POST/PUT create+import, member RBAC's owner flow, and
+      # REST-only paths the local-mode suite cannot see.
+      - name: Run server-mode E2E
+        run: npx playwright test --config playwright.server.config.ts
+        env:
+          OPENARCH_DATA: /tmp/openarch-e2e-models.json

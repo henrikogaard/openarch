@@ -277,15 +277,32 @@ const app = Fastify({ logger: true });
  * list ("https://arch.example.com,https://ea.example.com") for real
  * deployments, or "true" to restore the old reflect-anything behaviour.
  */
-const corsOriginSetting = process.env.OPENARCH_CORS_ORIGIN ?? 'http://localhost:5173,http://127.0.0.1:5173';
-const corsOrigin =
-  corsOriginSetting === 'true'
-    ? true
-    : corsOriginSetting
-        .split(',')
-        .map((origin) => origin.trim())
-        .filter(Boolean);
-await app.register(cors, { origin: corsOrigin });
+const corsOriginSetting = process.env.OPENARCH_CORS_ORIGIN ?? '';
+await app.register(cors, {
+  // Default: allow same-origin requests plus any local dev loopback origin
+  // (localhost/127.0.0.1 on any port) — the Vite dev server (:5173) and the
+  // server's own hosted build must both reach the API. Set
+  // OPENARCH_CORS_ORIGIN to a comma-separated list for deployments, or
+  // "true" to reflect arbitrary origins (NOT recommended).
+  origin(origin, callback) {
+    if (!origin) return callback(null, true); // same-origin / non-browser clients
+    if (corsOriginSetting === 'true') return callback(null, true);
+    const allowed = corsOriginSetting
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (allowed.length) return callback(null, allowed.includes(origin));
+    try {
+      const { hostname } = new URL(origin);
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+        return callback(null, true);
+      }
+    } catch {
+      // fall through to deny
+    }
+    return callback(null, false);
+  },
+});
 if (existsSync(webDist)) {
   await app.register(fastifyStatic, { root: webDist, prefix: '/', decorateReply: true });
 }

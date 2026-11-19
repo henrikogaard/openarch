@@ -4,6 +4,7 @@ import { defineConfig } from '@playwright/test';
 // suite (npm test) stays unit/component-level and does not touch this folder.
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: '**/server.spec.ts', // server-mode has its own config/job
   timeout: 90_000,
   expect: { timeout: 10_000 },
   workers: 1,

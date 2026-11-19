@@ -544,11 +544,11 @@ export default function App() {
     setSelectedNodeIds([]);
     clipboardRef.current = [];
     setClipboardCount(0);
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}?workspace=${encodeURIComponent(id)}`,
-    );
+    // Keep the storage-mode parameter on deep links: a reload must land in
+    // the SAME mode (server/git), not silently fall back to local.
+    const params = new URLSearchParams(window.location.search);
+    params.set('workspace', id);
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
   };
 
   const goHome = () => {
@@ -1190,11 +1190,21 @@ export default function App() {
     commit((model) => setNodeZOrder(model, viewId, selectedNodeIds, position));
   };
 
-  // Esc exits presentation mode.
+  // Presentation keyboard: ←/→ switch views, F toggles fullscreen, Esc exits.
   useEffect(() => {
     if (!presenting) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setPresenting(false);
+      if (event.key === 'ArrowRight') {
+        setActiveViewIndex((index) => Math.min(index + 1, modelRef.current ? modelRef.current.views.length - 1 : index));
+      }
+      if (event.key === 'ArrowLeft') {
+        setActiveViewIndex((index) => Math.max(0, index - 1));
+      }
+      if (event.key.toLowerCase() === 'f') {
+        if (document.fullscreenElement) void document.exitFullscreen();
+        else void document.documentElement.requestFullscreen().catch(() => undefined);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -1436,9 +1446,14 @@ export default function App() {
       <LanguageContext.Provider value={language}>
         <div className="app presenting">
           {canvasElement}
-          <button className="present-exit" onClick={() => setPresenting(false)}>
-            ✕ Exit (Esc)
-          </button>
+          <div className="present-hud">
+            <span className="muted">
+              {model ? primaryText(model.views[activeViewIndex]?.name ?? []) : ''} · ←/→ views · F fullscreen
+            </span>
+            <button className="present-exit" onClick={() => setPresenting(false)}>
+              ✕ Exit (Esc)
+            </button>
+          </div>
         </div>
       </LanguageContext.Provider>
     );

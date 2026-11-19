@@ -11,6 +11,7 @@ import MatrixView from './MatrixView';
 import ValidationPanel from './ValidationPanel';
 import ValueStreams from './ValueStreams';
 import { MigrationTimelinePanel, TraceabilityPanel } from './AnalysisPanels';
+import ScenarioPanel from './ScenarioPanel';
 import ViewDesigner from './ViewDesigner';
 import WorkspaceHome from './WorkspaceHome';
 
@@ -197,5 +198,22 @@ describe('analysis panels', () => {
     render(<MigrationTimelinePanel model={model} onSelect={() => {}} />);
     expect(screen.getByText('Wave 1')).toBeTruthy();
     expect(screen.getByText('Target 2027')).toBeTruthy();
+  });
+});
+
+describe('ScenarioPanel', () => {
+  it('compares two scenarios with overlap and changed/new/dropped elements', () => {
+    const baseline = createSampleModel();
+    const target = createSampleModel();
+    target.elements = target.elements.map((e) =>
+      e.id === 'e-portal' ? { ...e, name: [{ lang: 'en', value: 'Claims Portal v2' }] } : e,
+    );
+    target.elements.push({
+      id: 'e-new', type: 'ApplicationComponent', name: [{ lang: 'en', value: 'Analytics' }], documentation: [], properties: [],
+    });
+    render(<ScenarioPanel baseline={baseline} target={target} />);
+    expect(screen.getByText(/Scenario comparison/)).toBeTruthy();
+    expect(screen.getAllByText(/changed/i).length).toBeGreaterThan(0);
+    expect(screen.getByText('Analytics')).toBeTruthy();
   });
 });

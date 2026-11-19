@@ -6,7 +6,8 @@ import {
   type Model,
   type TimeClassification,
 } from '@openarch/core';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import ScenarioPanel from './ScenarioPanel';
 
 interface PortfolioProps {
   models: Model[];
@@ -30,6 +31,11 @@ const TIME_HINT: Record<TimeClassification, string> = {
 
 export default function Portfolio({ models, onOpen, onBack }: PortfolioProps) {
   const stats = useMemo(() => portfolioStats(models), [models]);
+  const [compareA, setCompareA] = useState('');
+  const [compareB, setCompareB] = useState('');
+  const baseline = models.find((model) => model.id === compareA);
+  const target = models.find((model) => model.id === compareB);
+  const compareReady = Boolean(baseline && target && baseline.id !== target.id);
   const applications = useMemo(
     () =>
       models.flatMap((model) =>
@@ -57,6 +63,48 @@ export default function Portfolio({ models, onOpen, onBack }: PortfolioProps) {
           <p>Cross-workspace view of the architecture landscape.</p>
         </div>
       </header>
+
+      {models.length >= 2 && (
+        <section className="panel-card wide">
+          <h3>Compare scenarios</h3>
+          <p className="muted">
+            Pick two workspaces to compare as-is vs to-be: overlap score plus changed, added, and
+            dropped elements (same element ids across workspaces align).
+          </p>
+          <div className="field-row">
+            <label className="field">
+              Baseline (as-is)
+              <select value={compareA} onChange={(event) => setCompareA(event.target.value)}>
+                <option value="">Select a workspace…</option>
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {primaryText(model.name) || model.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              Target (to-be)
+              <select value={compareB} onChange={(event) => setCompareB(event.target.value)}>
+                <option value="">Select a workspace…</option>
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {primaryText(model.name) || model.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </section>
+      )}
+
+      {compareReady && (
+        <ScenarioPanel
+          baseline={baseline!}
+          target={target!}
+          onOpenElement={(_id, which) => onOpen(which.id)}
+        />
+      )}
 
       <div className="stat-grid">
         <div className="stat-card">

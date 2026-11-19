@@ -2329,3 +2329,31 @@ table.matrix td.filled {
   display: flex;
 }
 .timeline-list li.active::before { content: "▶ "; color: var(--accent); }
+
+.scenario-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+}
+.scenario-column {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  max-height: 44vh;
+  overflow-y: auto;
+}
+.scenario-column h4 { margin: 4px 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+.present-hud {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.present-hud .present-exit {
+  position: static;
+}
