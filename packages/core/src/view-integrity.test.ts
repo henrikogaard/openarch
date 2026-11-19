@@ -3,8 +3,9 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { primaryText } from './types';
 import { parseAoef, serializeAoef } from './aoef';
-import { conflictEntries } from './conflict';
+import { applyResolutions, commentCountsByNode, conflictEntries } from './conflict';
 import { defaultConfigFor } from './granulation';
 import { buildConfiguredView } from './granulation';
 import { mergeModels } from './diff';
@@ -247,5 +248,64 @@ describe('conflict entries', () => {
     expect(added?.status).toBe('theirs-only');
     // Unchanged entities are not listed.
     expect(entries.some((entry) => entry.id === 'e-customer' && entry.status === 'changed')).toBe(false);
+  });
+});
+
+describe('per-entity conflict resolution', () => {
+  it('resolves changed entities back to mine or forward to theirs individually', () => {
+    const yours = createSampleModel();
+    const theirs = createSampleModel();
+    // Both sides changed: rename the portal (mine keeps our name) and rename
+    // billing (we want theirs).
+    yours.elements = yours.elements.map((e) =>
+      e.id === 'e-portal' ? { ...e, name: [{ lang: 'en', value: 'My Portal' }] } : e,
+    );
+    theirs.elements = theirs.elements.map((e) =>
+      e.id === 'e-portal'
+        ? { ...e, name: [{ lang: 'en', value: 'Their Portal' }] }
+        : e.id === 'e-billing'
+          ? { ...e, name: [{ lang: 'en', value: 'Their Billing' }] }
+          : e,
+    );
+    const resolutions = new Map<string, 'mine' | 'theirs'>([
+      ['e-portal', 'mine'],
+      ['e-billing', 'theirs'],
+    ]);
+    const merged = applyResolutions(yours, theirs, resolutions);
+    expect(primaryText(merged.elements.find((e) => e.id === 'e-portal')!.name)).toBe('My Portal');
+    expect(primaryText(merged.elements.find((e) => e.id === 'e-billing')!.name)).toBe('Their Billing');
+    // Validity holds after manual resolution.
+    expect(validateModel(merged).filter((issue) => issue.severity === 'error')).toEqual([]);
+  });
+
+  it("resolving 'mine' on a theirs-only addition removes it entirely", () => {
+    const yours = createSampleModel();
+    const theirs = createSampleModel();
+    theirs.elements.push({
+      id: 'new-incoming',
+      type: 'BusinessActor',
+      name: [{ lang: 'en', value: 'Incoming actor' }],
+      documentation: [],
+      properties: [],
+    });
+    const merged = applyResolutions(yours, theirs, new Map([['new-incoming', 'mine']]));
+    expect(merged.elements.some((element) => element.id === 'new-incoming')).toBe(false);
+  });
+});
+
+describe('comment pins', () => {
+  it('counts anchored comments per canvas node', () => {
+    const model = createSampleModel();
+    const comments = [
+      { id: 'c-1', elementId: 'e-portal' },
+      { id: 'c-2', elementId: 'e-portal' },
+      { id: 'c-3', elementId: 'e-customer' },
+      { id: 'c-4' }, // unanchored: no pin
+      { id: 'c-5', elementId: 'missing-element' }, // unknown anchor: no pin
+    ];
+    const counts = commentCountsByNode(model, comments);
+    expect(counts.get('n4')).toBe(2); // e-portal's node in view-overview
+    expect(counts.get('n1')).toBe(1); // e-customer
+    expect(counts.size).toBe(2);
   });
 });

@@ -1,5 +1,6 @@
 import type { Model, Point } from './types';
 import { primaryText } from './types';
+import { mergeModels } from './diff';
 
 export interface ConflictEntry {
   id: string;
@@ -89,4 +90,82 @@ export function commentPins(
     });
   }
   return pins;
+}
+
+export type Resolution = 'mine' | 'theirs';
+
+/**
+ * Compose a reviewed model from a conflict: start from semantic
+ * `mergeModels` (which never deletes), then let per-entity resolutions veto
+ * specific automatic outcomes:
+ * - 'mine' on an entity that merge would take from theirs restores OUR
+ *   version of that element/relationship and drops theirs;
+ * - 'theirs' on an entity we own forces THEIR version and drops ours.
+ * Views stay reconciled by mergeModels (edge faithfulness invariants).
+ */
+export function applyResolutions(yours: Model, theirs: Model, resolutions: Map<string, Resolution>): Model {
+  if (resolutions.size === 0) return mergeModels(yours, theirs);
+  const keepMine = new Set<string>();
+  const keepTheirs = new Set<string>();
+  for (const [id, resolution] of resolutions) {
+    if (resolution === 'mine') keepMine.add(id);
+    else keepTheirs.add(id);
+  }
+  const shadowTheirs: Model = {
+    ...theirs,
+    elements: theirs.elements.filter((element) => !keepMine.has(element.id)),
+    relationships: theirs.relationships.filter((relationship) => !keepMine.has(relationship.id)),
+  };
+  const incorporated = mergeModels(yours, shadowTheirs);
+  const elements = incorporated.elements.map((element) => {
+    if (keepMine.has(element.id)) {
+      const mine = yours.elements.find((candidate) => candidate.id === element.id);
+      if (mine) return mine;
+    }
+    if (keepTheirs.has(element.id)) {
+      const theirVersion = theirs.elements.find((candidate) => candidate.id === element.id);
+      if (theirVersion) return theirVersion;
+    }
+    return element;
+  });
+  const relationships = incorporated.relationships.map((relationship) => {
+    if (keepMine.has(relationship.id)) {
+      const mine = yours.relationships.find((candidate) => candidate.id === relationship.id);
+      if (mine) return mine;
+    }
+    if (keepTheirs.has(relationship.id)) {
+      const theirVersion = theirs.relationships.find((candidate) => candidate.id === relationship.id);
+      if (theirVersion) return theirVersion;
+    }
+    return relationship;
+  });
+  // Keep the merge invariants: prune edges that no longer depict faithfully.
+  const relationshipIndex = new Map(relationships.map((relationship) => [relationship.id, relationship]));
+  const views = incorporated.views.map((view) => ({
+    ...view,
+    edges: view.edges.filter((edge) => {
+      const relationship = relationshipIndex.get(edge.relationshipRef);
+      if (!relationship) return false;
+      const sourceNode = view.nodes.find((node) => node.id === edge.source);
+      const targetNode = view.nodes.find((node) => node.id === edge.target);
+      return (
+        sourceNode?.elementRef === relationship.source && targetNode?.elementRef === relationship.target
+      );
+    }),
+  }));
+  return { ...incorporated, elements, relationships, views };
+}
+
+
+/** Count comments anchored to each canvas node (pins), for the editor overlay. */
+export function commentCountsByNode(
+  model: Model,
+  comments: Array<{ id: string; elementId?: string }>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const pin of commentPins(model, comments)) {
+    if (!pin.nodeId) continue;
+    counts.set(pin.nodeId, (counts.get(pin.nodeId) ?? 0) + 1);
+  }
+  return counts;
 }

@@ -1,9 +1,12 @@
 import {
+  createFromTemplate,
   WORKSPACE_TEMPLATES,
+  type Model,
   type ModelPurpose,
   type ModelSummary,
   type WorkspaceStatus,
 } from '@openarch/core';
+import { exportViewSvg } from '@openarch/exporters';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '../i18n';
 
@@ -64,6 +67,20 @@ const EMPTY_DRAFT: CreateWorkspaceInput = {
   owner: '',
   tags: [],
 };
+
+/**
+ * Render a small SVG preview of a template's first view. Template models are
+ * tiny (they render in <1 ms), so this runs once per dialog open.
+ */
+function templatePreview(templateId: string): string {
+  try {
+    const model: Model = createFromTemplate(templateId);
+    if (!model.views.length) return '';
+    return exportViewSvg(model, model.views[0].id);
+  } catch {
+    return '';
+  }
+}
 
 export default function WorkspaceHome({
   workspaces,
@@ -352,6 +369,17 @@ export default function WorkspaceHome({
                   ))}
                 </select>
               </label>
+              {(() => {
+                const preview = templatePreview(draft.templateId);
+                return preview ? (
+                  <div
+                    className="template-preview"
+                    role="img"
+                    aria-label={`${draft.templateId} template preview`}
+                    dangerouslySetInnerHTML={{ __html: preview }}
+                  />
+                ) : null;
+              })()}
               <label className="field">
                 Tags
                 <input

@@ -2357,3 +2357,88 @@ table.matrix td.filled {
 .present-hud .present-exit {
   position: static;
 }
+
+.conflict-resolve {
+  display: flex;
+  gap: 4px;
+}
+.conflict-resolve .small-button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.comment-pin {
+  position: absolute;
+  top: -12px;
+  right: -8px;
+  z-index: 5;
+  background: #2563eb;
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  pointer-events: none;
+  box-shadow: 0 2px 6px #0003;
+}
+
+/* Print/PDF: browser print produces a clean one-page diagram per view. */
+@media print {
+  body {
+    background: #fff;
+  }
+  .sidebar,
+  .topbar,
+  .view-bar,
+  .inspector,
+  .canvas-palette,
+  .canvas-hint,
+  .selection-bar,
+  .react-flow__minimap,
+  .react-flow__controls,
+  .react-flow__attribution,
+  .skip-link,
+  .present-hud {
+    display: none !important;
+  }
+  .app,
+  .main,
+  .content,
+  .workspace,
+  .editor-area,
+  .canvas-wrap,
+  .react-flow {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+  .react-flow__renderer,
+  .react-flow__viewport {
+    transform: none !important;
+  }
+}
+
+/* Catalog scale: constant render cost for 10k+ element tables. */
+.catalog-table {
+  contain: content;
+}
+.catalog-table tbody tr {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}
+
+.template-preview {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  margin-top: 6px;
+  height: 180px;
+  overflow: hidden;
+}
+.template-preview svg {
+  width: 100%;
+  height: 100%;
+}

@@ -19,6 +19,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import {
+  commentCountsByNode,
   ELEMENT_TYPES,
   elementAttributes,
   elementsByLayer,
@@ -78,6 +79,11 @@ function ArchiShape({ data, selected }: NodeProps) {
         </span>
       )}
       <span className="archi-node-label">{nodeData.label}</span>
+      {(Number(nodeData.commentCount) || 0) > 0 && (
+        <span className="comment-pin" title={`${nodeData.commentCount} comment(s)`}>
+          {`💬 ${nodeData.commentCount}`}
+        </span>
+      )}
       {!isGroup && <span className="archi-node-type">{definition?.label ?? nodeData.typeId}</span>}
       {!isGroup && nodeData.attributes.length > 0 && (
         <span className="archi-node-attributes">
@@ -159,6 +165,10 @@ function FitViewOnChange({ viewId, signal }: { viewId: string; signal: number })
   return null;
 }
 
+interface ToFlowNodesOptions {
+  comments?: Array<{ id: string; elementId?: string }>;
+}
+
 function toFlowNodes(
   view: View,
   elements: ArchiElement[],
@@ -166,9 +176,14 @@ function toFlowNodes(
   visibleLayers: Set<Layer>,
   environmentFilter: string,
   iconPack: string,
+  options: ToFlowNodesOptions = {},
 ): Node[] {
   const byId = new Map(elements.map((element) => [element.id, element]));
   const boundsById = new Map(view.nodes.map((node) => [node.id, node.bounds]));
+  const commentCounts = commentCountsByNode(
+    { elements, relationships: [], views: [view] } as never,
+    options.comments ?? [],
+  );
   return view.nodes.map((node) => {
     if (node.type === 'Container') {
       // Containers visualise a Grouping element via their native
@@ -316,6 +331,8 @@ interface CanvasProps {
   iconPack: string;
   /** True inside presentation mode: the canvas becomes read-only. */
   presenting?: boolean;
+  /** Server-mode comments anchored to elements (rendered as canvas pins). */
+  comments?: Array<{ id: string; elementId?: string }>;
   onSelectionChange?: (nodeIds: string[], edgeIds: string[]) => void;
   onRenameElement: (elementId: string, name: string) => void;
   onDuplicateNodes: (nodeIds: string[]) => void;
@@ -338,6 +355,7 @@ function CanvasFlow({
   domains,
   visibleLayers,
   environmentFilter,
+  comments,
   onSelectElement,
   onNodeMove,
   onAddElement,
@@ -368,8 +386,8 @@ function CanvasFlow({
   const t = useTranslation();
   const { screenToFlowPosition } = useReactFlow();
   const initialNodes = useMemo(
-    () => toFlowNodes(view, elements, domains, visibleLayers, environmentFilter, iconPack),
-    [view, elements, domains, visibleLayers, environmentFilter, iconPack],
+    () => toFlowNodes(view, elements, domains, visibleLayers, environmentFilter, iconPack, { comments }),
+    [view, elements, domains, visibleLayers, environmentFilter, iconPack, comments],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const initialEdges = useMemo(
