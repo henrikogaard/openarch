@@ -267,3 +267,41 @@ Please keep the AOEF conformance tests green — interoperability is the point o
 ## License
 
 [MIT](LICENSE) © 2026 Henrik Øgård
+
+## Self-hosting
+
+```bash
+docker build -t openarch .
+docker run -p 8080:8080 -v openarch-data:/app/data openarch
+# or with everything incl. Keycloak for live OIDC testing:
+docker compose --profile keycloak up
+```
+
+Configuration (auth, CORS, SCIM, org scoping) is documented in `.env.example`.
+
+## Documentation site
+
+`docs/` render to a single-page site (zero dependencies):
+
+```bash
+npm run docs:build          # -> site-dist/index.html
+```
+
+CI publishes it to GitHub Pages on every push to `main` (`.github/workflows/docs.yml`).
+
+## Scheduled publishing
+
+Publish a workspace report to Confluence from cron:
+
+```bash
+npx openarch publish-confluence model.xml \
+  --url https://company.atlassian.net/wiki --space ARCH \
+  --email me@company.com --token "$CONFLUENCE_TOKEN"
+```
+
+For live OIDC verification against a real Keycloak (compose profile above):
+
+```bash
+OPENARCH_OIDC_LIVE_ISSUER=http://localhost:8180/realms/openarch \
+OPENARCH_OIDC_LIVE_TOKEN=<access-token> npx vitest run apps/server/src/oidc.live.test.ts
+```

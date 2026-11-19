@@ -14,6 +14,7 @@ import { exportElementsCsv, exportMermaid } from '@openarch/exporters';
 import { exportArchi, importArchi } from '@openarch/archi';
 import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
 import { checkRules, exportWorkspaceMarkdown, parseRules } from '@openarch/reporting';
+import { publish } from './publish';
 // Reuse the single canonical diff implementation (core) — a private CLI
 // duplicate drifted from the server/web semantics.
 
@@ -34,6 +35,8 @@ Commands:
   report <file> <output.md>  Write a Markdown workspace report
   script <model> <file.js> [out]  Run a sandboxed script against a model (must return the model)
   iac diff <model> <iac-file> [--fail-on drift]  Report IaC drift (CI gate with --fail-on)
+  publish-confluence <model> --url URL --space KEY --email E --token T [--title "..."]
+                                                 Publish a workspace report to Confluence (cron for scheduled publishing)
   doctor                     Print environment and capability information
   --help                     Show this help
 
@@ -437,6 +440,15 @@ async function main(): Promise<number> {
         throw new Error('Usage: openarch iac diff <model> <terraform plan JSON|yaml|k8s|compose> [--fail-on drift]');
       }
       return iacDiff(args[1], args[2], args[4]);
+    case 'publish-confluence': {
+      requireArgs(args, command, 1);
+      const flags: Record<string, string | undefined> = {};
+      for (let index = 1; index < args.length; index += 2) {
+        const name = String(args[index]).replace(/^--/, '');
+        flags[name] = args[index + 1];
+      }
+      return publish(args[0], flags);
+    }
     case 'doctor':
       requireArgs(args, command, 0);
       return doctor();

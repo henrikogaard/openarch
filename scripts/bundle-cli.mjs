@@ -34,5 +34,6 @@ const result = await build({
 
 await chmod(join(outdir, 'cli.mjs'), 0o755);
 
-const kilobytes = Math.round(result.outputFiles?.[0]?.bytes / 1024 ?? 0);
-console.log(`cli bundled: packages/cli/dist/cli.mjs (${kilobytes} kB + sourcemap)`);
+import { stat } from 'node:fs/promises';
+const bytes = (await stat(join(outdir, 'cli.mjs'))).size;
+console.log(`cli bundled: packages/cli/dist/cli.mjs (${Math.round(bytes / 1024)} kB + sourcemap)`);
