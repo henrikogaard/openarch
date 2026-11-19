@@ -16,7 +16,9 @@ import {
   metamodelVersions,
   primaryText,
   registerMetamodelVersion,
+  unregisterMetamodelVersion,
   registerPlugin,
+  unregisterPlugin,
   RELATIONSHIP_TYPES,
   searchModel,
   traceElements,
@@ -142,8 +144,12 @@ describe('analysis', () => {
     expect(getMetamodel('3.2').elementTypes.length).toBe(ELEMENT_TYPES.length);
     expect(getMetamodel('9.9').elementTypes.length).toBe(ELEMENT_TYPES.length); // falls back to 3.2
 
-    registerMetamodelVersion('4.0', { elementTypes: ELEMENT_TYPES, relationshipTypes: RELATIONSHIP_TYPES });
-    expect(metamodelVersions()).toContain('4.0');
+    registerMetamodelVersion('4.0-test', { elementTypes: ELEMENT_TYPES, relationshipTypes: RELATIONSHIP_TYPES });
+    expect(metamodelVersions()).toContain('4.0-test');
+    // Clean up: registry state is process-global and must not leak into other
+    // tests in this file's workers.
+    unregisterMetamodelVersion('4.0-test');
+    expect(metamodelVersions()).not.toContain('4.0-test');
 
     const model = createSampleModel();
     model.metamodelVersion = '9.9';
@@ -225,6 +231,8 @@ describe('plugins', () => {
     expect(validateWithPlugins(createSampleModel()).some((issue) => issue.rule === 'custom.sample')).toBe(
       true,
     );
+    // Registry state is process-global; undo to keep tests order-independent.
+    unregisterPlugin('test-plugin');
   });
 });
 

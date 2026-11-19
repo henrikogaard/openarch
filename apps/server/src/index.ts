@@ -367,8 +367,15 @@ app.get('/scim/v2/Users', async (request, reply) => {
   if (!requireScim(request, reply)) return;
   const filter = (request.query as { filter?: string }).filter ?? '';
   let users = [...scimUsers.values()];
-  const match = /userName eq "([^"]+)"/.exec(filter);
-  if (match) users = users.filter((user) => user.userName === match[1]);
+  if (filter) {
+    const match = /userName eq "([^"]+)"/.exec(filter);
+    if (!match) {
+      // Unsupported filters must not silently return the full user list —
+      // reply 400 so provisioners surface the mismatch instead of mis-syncing.
+      return reply.code(400).send({ error: `Unsupported SCIM filter (only userName eq "..." is supported)` });
+    }
+    users = users.filter((user) => user.userName === match[1]);
+  }
   return scimListResponse(users);
 });
 

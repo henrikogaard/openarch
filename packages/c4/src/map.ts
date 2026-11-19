@@ -16,7 +16,7 @@ export function c4RelationshipType(label: string): string {
   if (normalized.includes('contain')) return 'Composition';
   return 'Association';
 }
-function c4ElementToArchi(c4: C4Element, index: number): ArchiElement {
+function c4ElementToArchi(c4: C4Element): ArchiElement {
   const properties = [{ key: 'source', value: 'c4' }, { key: 'c4Kind', value: c4.kind }];
   if (c4.technology) properties.push({ key: 'technology', value: c4.technology });
   if (c4.tags) properties.push({ key: 'tags', value: c4.tags });
@@ -26,10 +26,6 @@ function c4ElementToArchi(c4: C4Element, index: number): ArchiElement {
     name: [{ lang: 'en', value: c4.name || c4.id }],
     documentation: c4.description ? [{ lang: 'en', value: c4.description }] : [],
     properties,
-    // Containers/components land on the technology layer visually via type only;
-    // keep application layer for systems/containers, technology for components is
-    // overkill — grouping is expressed by the C4 views.
-    ...(c4.kind === 'person' ? {} : {}),
   };
 }
 
@@ -65,7 +61,7 @@ function gridPosition(index: number): { x: number; y: number } {
 
 /** Convert a parsed C4 model into an OpenArch model: one ArchiMate view per C4 view. */
 export function c4ToModel(c4: C4Model): Model {
-  const elements = c4.elements.map((element, index) => c4ElementToArchi(element, index));
+  const elements = c4.elements.map((element) => c4ElementToArchi(element));
   const elementIds = new Map(c4.elements.map((element, index) => [element.id, elements[index].id]));
   const pairCounts = new Map<string, number>();
   const relationships = c4.relationships
@@ -87,7 +83,6 @@ export function c4ToModel(c4: C4Model): Model {
         };
       })
       .filter((node) => node !== null);
-    const nodeIds = new Set(nodes.map((node) => node.id));
     const edges = view.relationships
       .map((rel, index) => {
         const sourceId = elementIds.get(rel.source);
@@ -110,7 +105,6 @@ export function c4ToModel(c4: C4Model): Model {
         };
       })
       .filter((edge) => edge !== null);
-    void nodeIds;
     return {
       id: `c4view-${view.key}`,
       type: 'Diagram',
