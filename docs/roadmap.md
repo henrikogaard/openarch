@@ -492,6 +492,35 @@ server-mode E2E in CI caught and pinned two real bugs (deep-link mode loss, loop
 
 MCP tool count: 41 (auto_layout_view, get_validation_issues, render_view_svg added).
 
+
+## 18. "Build what's not built" round (2026-11-19 evening) — closing the remaining backlog
+
+Deliberately unbuilt (hard rules, not bugs): CRDT real-time editing (AGENTS §13), CMDB/ITSM
+replacement (§13), marketplace before adoption (§13), ArchiMate 4.0 element deltas (awaiting the
+official spec; the registry mechanics from ADR-0003 are in place).
+
+Everything else that was listed as "not built" is now built:
+
+- **Security/audit**: `npm audit` = **0 vulnerabilities** (prod+dev) — the image-size ReDoS
+  (via pptxgenjs) pinned to the patched 2.0.4 with a clean lockfile.
+- **Conflict review**: per-entity Mine/Theirs resolution (core `applyResolutions` + UI buttons,
+  "Skip" for incoming additions) on top of the semantic merge — full three-way review flows.
+- **Canvas**: 💬 comment pins anchored to elements (server comments rendered as node badges).
+- **Print/PDF**: `@media print` stylesheet (browser print = clean one-page view).
+- **Catalogue at scale**: content-visibility rows — constant render cost at 10k+ elements.
+- **Sample gallery**: live SVG template previews in the New-workspace dialog.
+- **Scheduled Confluence publishing**: `openarch publish-confluence` CLI (cron-able, tested).
+- **Docker**: multi-stage image + .dockerignore + compose incl. a Keycloak profile for live
+  OIDC; CI Docker build smoke; dedicated docker+release workflows (tags → ghcr images).
+- **Community**: CONTRIBUTING.md, SECURITY.md (threat model), bug/feature issue templates,
+  discussions config, CHANGELOG.md.
+- **Release process**: tag-triggered workflow (changelog-section → GitHub Release → image).
+- **Docs site**: zero-dependency single-page builder (`scripts/build-docs.mjs`) + Pages
+  workflow; 12 modules; built locally (site-dist).
+- **`npx openarch`**: publishable `packages/cli` — self-contained esbuild bundle (verified
+  validate/convert/doctor/.drawio against the artifact) + `npm pack` smoke (4-file tarball).
+- **OIDC live**: opt-in live-Keycloak verification test (skips without env).
+
 ## 16. Immediate backlog
 
 | Order | Item | Phase | Status |
