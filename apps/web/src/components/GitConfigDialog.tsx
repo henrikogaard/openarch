@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from '../i18n';
+import { useFocusTrap } from '../useFocusTrap';
 
 export interface GitConfig {
   owner: string;
@@ -19,6 +20,8 @@ interface GitConfigDialogProps {
  * `architecture/<workspace>.json` and committed via the Contents API).
  */
 export default function GitConfigDialog({ onConnect, onCancel }: GitConfigDialogProps) {
+  const trapRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(trapRef, true);
   const t = useTranslation();
   const [owner, setOwner] = useState('');
   const [repo, setRepo] = useState('');
@@ -28,7 +31,7 @@ export default function GitConfigDialog({ onConnect, onCancel }: GitConfigDialog
   const valid = owner.trim() && repo.trim() && branch.trim() && token.trim();
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('connectGit')} onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}>
+    <div ref={trapRef} className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('connectGit')} onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}>
       <div className="modal">
         <header className="modal-header">
           <h2>{t('connectGit')}</h2>

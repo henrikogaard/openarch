@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from '../i18n';
+import { useFocusTrap } from '../useFocusTrap';
 
 interface OnboardingDialogProps {
   onCreate: () => void;
@@ -24,11 +25,13 @@ const STEPS = [
 
 /** First-run welcome; shown once per browser (localStorage flag). */
 export default function OnboardingDialog({ onCreate, onImport, onDismiss }: OnboardingDialogProps) {
+  const trapRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(trapRef, true);
   const t = useTranslation();
   const [step, setStep] = useState(0);
   const current = STEPS[step];
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('welcome')}>
+    <div ref={trapRef} className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('welcome')}>
       <div className="modal">
         <header className="modal-header">
           <h2>{t('welcome')}</h2>

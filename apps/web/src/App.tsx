@@ -72,6 +72,7 @@ import Artefacts from './components/Artefacts';
 import Canvas from './components/Canvas';
 import Catalog from './components/Catalog';
 import Collaborate from './components/Collaborate';
+import ConflictReview from './components/ConflictReview';
 import CommandPalette, { type CommandItem } from './components/CommandPalette';
 import Dashboard from './components/Dashboard';
 import DeploymentView from './components/DeploymentView';
@@ -87,6 +88,7 @@ import MatrixView from './components/MatrixView';
 import OnboardingDialog from './components/OnboardingDialog';
 import Portfolio from './components/Portfolio';
 import SavedViews, { type SavedView } from './components/SavedViews';
+import ShortcutHelp from './components/ShortcutHelp';
 import Sidebar from './components/Sidebar';
 import TraceView from './components/TraceView';
 import ValueStreams from './components/ValueStreams';
@@ -186,6 +188,7 @@ export default function App() {
   const [presenting, setPresenting] = useState(false);
   const [iconPack, setIconPack] = useState('archimate');
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [conflict, setConflict] = useState<{ currentVersion?: number; current?: Model } | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(() => !localStorage.getItem('openarch-onboarded'));
   const [createSignal, setCreateSignal] = useState(0);
@@ -354,6 +357,11 @@ export default function App() {
       const typing =
         target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
       if (typing) return;
+      if (event.key === '?') {
+        event.preventDefault();
+        setShortcutHelpOpen((open) => !open);
+        return;
+      }
       const current = modelRef.current;
       const elementIds = current ? elementRefsForNodes(current, selectedNodeIds) : [];
       if (key === 'c' && elementIds.length) {
@@ -1418,6 +1426,8 @@ export default function App() {
           createSignal={createSignal}
           importSignal={importSignal}
         />
+        {shortcutHelpOpen && <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />}
+
         <CommandPalette
           open={paletteOpen}
           items={commands}
@@ -1473,9 +1483,11 @@ export default function App() {
 
         <main className="main">
           <header className="topbar">
-            <nav className="tabs" aria-label="Workspace views">
+            <nav className="tabs" role="tablist" aria-label="Workspace views">
               {primaryTabs.map((name) => (
                 <button key={name} className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>
+                    role="tab"
+                    aria-selected={tab === name}
                   {t(name)}
                 </button>
               ))}
@@ -1807,51 +1819,28 @@ export default function App() {
         )}
 
         {conflict && model && (
-          <div
-            className="modal-overlay"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Save conflict"
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') setConflict(null);
+          <ConflictReview
+            yours={model}
+            theirs={conflict.current ?? model}
+            onKeepMine={() => {
+              const version = conflict.currentVersion;
+              setConflict(null);
+              void save({ forceVersion: version });
             }}
-          >
-            <div className="modal">
-              <header className="modal-header">
-                <h2>Save conflict</h2>
-                <button className="icon-button" onClick={() => setConflict(null)} aria-label="Close">
-                  ×
-                </button>
-              </header>
-              <div className="modal-body">
-                <p>
-                  This workspace was changed on the server
-                  {conflict.currentVersion ? ` (now at revision v${conflict.currentVersion})` : ''}. Choose
-                  whether to load their changes or overwrite them with yours.
-                </p>
-              </div>
-              <footer className="modal-footer">
-                <button
-                  onClick={() => {
-                    setConflict(null);
-                    void openWorkspace(model.id);
-                  }}
-                >
-                  Load their changes
-                </button>
-                <button
-                  className="primary-button"
-                  onClick={() => {
-                    const version = conflict.currentVersion;
-                    setConflict(null);
-                    void save({ forceVersion: version });
-                  }}
-                >
-                  Overwrite with mine
-                </button>
-              </footer>
-            </div>
-          </div>
+            onTakeTheirs={() => {
+              setConflict(null);
+              void openWorkspace(model.id);
+            }}
+            onMerge={(merged) => {
+              // Semantic merge already resolved the content; save it against
+              // the server's current version, keeping our uncommitted review.
+              const version = conflict.currentVersion;
+              setConflict(null);
+              commit(() => merged);
+              void save({ forceVersion: version });
+            }}
+            onCancel={() => setConflict(null)}
+          />
         )}
 
         {showSavedViews && (

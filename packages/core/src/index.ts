@@ -10,3 +10,4 @@ export * from './analysis';
 export * from './diff';
 export * from './plugins';
 export * from './scripting';
+export * from './conflict';

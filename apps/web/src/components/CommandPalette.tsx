@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '../i18n';
+import { useFocusTrap } from '../useFocusTrap';
 
 export interface CommandItem {
   id: string;
@@ -31,6 +32,8 @@ function matches(item: CommandItem, query: string): boolean {
  * Arrow keys move, Enter runs, Escape closes.
  */
 export default function CommandPalette({ open, items, onClose, onRun }: CommandPaletteProps) {
+  const trapRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(trapRef, open);
   const t = useTranslation();
   const [query, setQuery] = useState('');
   const [highlighted, setHighlighted] = useState(0);
@@ -62,7 +65,7 @@ export default function CommandPalette({ open, items, onClose, onRun }: CommandP
   };
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('commandPalette')} onClick={onClose}>
+    <div ref={trapRef} className="modal-overlay" role="dialog" aria-modal="true" aria-label={t('commandPalette')} onClick={onClose}>
       <div className="command-palette" onClick={(event) => event.stopPropagation()}>
         <input
           ref={inputRef}

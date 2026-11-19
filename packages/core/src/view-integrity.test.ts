@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseAoef, serializeAoef } from './aoef';
+import { conflictEntries } from './conflict';
 import { defaultConfigFor } from './granulation';
 import { buildConfiguredView } from './granulation';
 import { mergeModels } from './diff';
@@ -220,5 +221,31 @@ describe('view integrity: grouping, ungrouping, reconnecting, merging', () => {
     const merged = mergeModels(current, incoming);
     expect(merged.domains?.some((domain) => domain.id === 'domain-external')).toBe(true);
     expect(merged.propertyDefinitions.some((definition) => definition.id === 'pd-1')).toBe(true);
+  });
+});
+
+describe('conflict entries', () => {
+  it('classifies changed, added, and removed entities across both models', () => {
+    const yours = createSampleModel();
+    const theirs = createSampleModel();
+    theirs.elements = theirs.elements.map((e) =>
+      e.id === 'e-portal' ? { ...e, name: [{ lang: 'en', value: 'Portal v2' }] } : e,
+    );
+    const extra = {
+      id: 'theirs-only-el',
+      type: 'Node',
+      name: [{ lang: 'en', value: 'Theirs node' }],
+      documentation: [],
+      properties: [],
+    };
+    theirs.elements.push(extra);
+    const entries = conflictEntries(yours, theirs);
+    const changed = entries.find((entry) => entry.id === 'e-portal');
+    expect(changed?.status).toBe('changed');
+    expect(changed?.theirs).toContain('Portal v2');
+    const added = entries.find((entry) => entry.id === 'theirs-only-el');
+    expect(added?.status).toBe('theirs-only');
+    // Unchanged entities are not listed.
+    expect(entries.some((entry) => entry.id === 'e-customer' && entry.status === 'changed')).toBe(false);
   });
 });
