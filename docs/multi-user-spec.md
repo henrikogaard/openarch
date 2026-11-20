@@ -494,3 +494,33 @@ Suggested first five PRs (order + reasoning):
 
 *Any deviation from this spec (adding a flag, loosening a role, storing anything new in the
 browser) requires updating this document in the same PR.*
+
+
+---
+
+# 11. Post-implementation status (2026-11-20)
+
+All PR-lines of this spec are implemented and shipped:
+
+- **A1** One-time owner bootstrap (`3542778`), **A2** named tokens (`026ed69`),
+  **A3** invites (`236b5b1`), **A4** OTP+sessions (`f7579d3`),
+  **A5** OIDC+PKCE (`51d3459`), **A6** env/docs/deployment sweep (`b949d1f`).
+- **B1** FolderRepository with drift review — contract (`ace27aa`) and the app-shell
+  Folder mode with reattach (`3ae7f2c`).
+- **B2** admin backup/restore/verify-store with §12.4 gates (`7076741`);
+  `--at` is now live via C4 (below), not only stable-refused.
+- **C1** op engine core + 300-op fuzz storm (`3361b31`); **C2** server event store —
+  hash-chained shards, snapshot cadence, boot migration, PUT-compat decomposition
+  (`2c3cc40`, `3dc0da6`); **C3** `POST /api/models/:id/ops` per-op
+  apply-or-reject + RT broadcast; **C4** `restore-at/:seq` point-in-time restore
+  as a logged event with pre-restore snapshot (`4903f68`).
+- **D1** mail adapter (Resend + SMTP + console fallback) with masked admin
+  endpoints and hot refresh (`863f3a2`); **D2/D3** round-trip-gated
+  invite-by-email delivery (`f755042`, `5fe4bd8`).
+- **E1** route parity registry made CI-fatal (`525df27`, `2b8e8ac`); **E2**
+  BYO hardening (deployment guide + BYO e2e that asserts **zero**
+  data-bearing requests leak from the public bundle) (`b949d1f`, `04c14d6`).
+
+Standing decisions still binding for any extension: no CRDT without a
+validation-first ADR (ADR 0004); no passwords (identity is delegated);
+no open registration.
