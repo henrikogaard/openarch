@@ -85,6 +85,7 @@ import GitConfigDialog, { type GitConfig } from './components/GitConfigDialog';
 import { ICON_PACKS } from './iconPacks';
 import { journalClear, journalRead, journalWrite } from './journal';
 import { useOps } from './useOps';
+import { parseAoefAsync, parseNativeAsync } from './workerParse';
 import { OfflineError, ReauthError, withErrorClass } from './sessionErrors';
 import { getAccessToken, setAccessToken, useCollab } from './useCollab';
 import DomainMap from './components/DomainMap';
@@ -880,8 +881,8 @@ export default function App() {
       } else {
         const text = await file.text();
         imported = file.name.toLowerCase().endsWith('.json')
-          ? parseNativeModel(text)
-          : parseAoef(text);
+          ? await parseNativeAsync(text)
+          : await parseAoefAsync(text);
       }
       if (route === 'workspace' && model) {
         setPendingImport({ incoming: imported, diff: diffModels(model, imported) });
