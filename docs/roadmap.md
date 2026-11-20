@@ -552,6 +552,15 @@ What shipped instead:
 If concurrent *field-level* co-editing ever becomes a real need, the staged path is: (1) prove
 this awareness layer insufficient for actual team workflows, (2) design an OT (server-authoritative
 operation log) layer that validates every operation — a CRDT remains the wrong tool here.
+
+## 20. Multi-user epic — implementation spec (2026-11-20)
+
+The full build-ready plan for tiers 1–3, login/OTP, invites, mail, the op-log collaboration
+engine, folder storage, and backup/restore lives in **`docs/multi-user-spec.md`** (PR-by-PR
+with API contracts, data formats, test gates, and sequencing). Design rationale stays in
+`docs/multi-user-plan.md` §8–§12; the engine decision is ADR 0004. Implementation follows the
+spec's §9 order, starting with the parity runner + owner bootstrap.
+
 ## 16. Immediate backlog
 
 | Order | Item | Phase | Status |
