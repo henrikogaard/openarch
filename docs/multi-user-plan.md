@@ -493,3 +493,220 @@ ground, ops only where more than one human writes.**
   from-address, since Resend requires domain verification to match it.
 
 
+### 11. Tier-2 hardening (2026-11-20): login + OTP, access granulation, storage safety
+
+Tier 2 is the shared **web/internal server**: login-required, workspace-scoped, no anonymous
+access, other people's data invisible by construction. This section fixes the remaining
+design points the owner raised: OTP login (with password/SSO slotting in later), how access
+is *granulated*, and whether the data model needs a "real database" to be safe.
+
+### 11.1 The access envelope — credentials ladder + sessions
+
+A tier-2 deployment ALWAYS requires authentication (`OPENARCH_REQUIRE_AUTH=true` is forced for
+this mode). The credential ladder — every rung reduces to the same thing: `subject +
+credential-check` in `auth.ts` middleware; nothing else in the stack ever sees "how" you logged
+in, so later rungs swap in without touching request handlers:
+
+| Rung | Credential | Use case | Status |
+|---|---|---|---|
+| 1 | **One-time OTP code by email** (login-as-you-know-it) | default login for invited users; no password anywhere | **design for this next** |
+| 2 | named access tokens (hashed at rest) | CLI/MCP/API users; long-lived automation | already designed (§8.3) |
+| 3 | SSO/OIDC via PKCE | enterprise deployment, later | spec exists (§8.2), ship after 1–2 |
+| 4 | local password accounts | **not planned** — if an operator insists, Keycloak solves it (§8.5) | out of scope by design |
+
+**Rung 1 (OTP) mechanics**:
+
+- `POST /api/auth/otp/request { email }` → if the subject exists (member or has an
+  outstanding invite), email a **6-digit code**: stored SHA-256-hashed, **10-minute TTL**,
+  burn-after-5-failed-attempt lockout per subject+IP, per-IP and per-server rate limits; the
+  response is always generic (no enumeration: registered and unknown emails answer
+  identically, unknowns just never receive mail).
+- `POST /api/auth/otp/verify { email, code }` → issues a **session**: opaque 256-bit token,
+  stored hashed server-side, **HttpOnly Secure cookie for the browser** (SameSite=Lax — CSRF
+  risk is nil for GET, and unsafe methods additionally require the request's own origin
+  header), and a **Bearer token variant for CLI/MCP usage**. Idle expiry (default 30 days;
+  `OPENARCH_SESSION_IDLE_DAYS`), absolute expiry, revocation list. Sessions audit
+  `login/otp`, `login/failed`, `logout` into the existing hash-chained audit log.
+- No user-visible "reset password" path ever exists; going through email *is* the recovery
+  mechanism. That's the point: no credentials to forget, phish or reset.
+
+### 11.2 Access granulation — the exact gate graph
+
+Granulation is enforced at **four levels**, and each level is an independent, audited
+permission check — never a single "global" role:
+
+```
+subject (from credential ladder)
+   └── membership per workspace     [shared list of exact capabilities] §8.4
+   └── idP groups → group→role map  [fills membership when no explicit row] §8.3
+   └── org scoping (optional)       [subject's org limits which list endpoints return] §4
+   └── operator (server host owner) [can mint identity/invites ONLY; no workspace-content browsing]
+```
+
+Concrete rules (all already enforced or already designed; the tests must hold them forever):
+
+1. **Membership is the only path to content**: read, write, history, comments, real-time
+   room, and the summary list filter by membership — so non-members never learn that other
+   workspaces *exist* (list replies include neither names nor counts); audit trails and
+   comments also leak nothing cross-workspace because comments/audit are stored per-workspace,
+   not globally.
+2. **Roles stay coarse and workspace-bound**: viewer/editor/owner per workspace, never
+   global. A "superuser" role does not exist; an org-admin grants membership or nothing.
+3. **Operator ≠ superuser**: whoever runs the container manages identity
+   (tokens/invites/sessions) *as a capability of hosting*, but the API/UI never surfaces
+   other people's model content to the operator unless the operator is themselves a member.
+   This stayed a core rule in §8.5 and remains one here.
+4. **Endpoint-parity tests are the real guarantee**: a four-role fixture matrix
+   (stranger/authenticated/viewer/editor/owner) fires at *every* `:id`-bearing route and
+   asserts status-code expectations — the guardrails aren't prose, they're the §4.3
+   cross-tenant fuzz suite plus per-route integration tests that must grow with every new
+   endpoint (new route, new row in the matrix, else build fails the "no route added without
+   gates" convention).
+
+### 11.3 "Should it be stored in a database? Is the data model safe?"
+
+Direct answer: **the data model is safe because validity is checked at the op gate before it
+can ever touch storage (ADR 0004), not because of which storage engine we point it at**; and
+the correct storage evolution is *not* to switch to a database — it's to stop rewriting a
+monolithic file and let the event-sourced design §10.2 do its job, adding SQLite/Postgres only
+where a specific operation *needs one*, without ever normalizing the ArchiMate metamodel
+into relational tables. Corrupted-by-bug data cannot land (protocol gate), and
+corrupted-by-crash cannot spread (per-workspace blast radius in the §10.2 layout, not a
+monolithic one).
+
+**The decision table (engine per concern):**
+
+| Concern | Default (all tier-2 installs) | Graduate to SQLite/postgres when | What NEVER to do |
+|---|---|---|---|
+| *Workspace content* | per-workspace folder: append-only `events/*.jsonl` + `snapshots/*.model.json` (§10.2) | multi-*process* servers need the wal+transaction machinery SQLite gives you (`events.db`) — single-process already safe under tmp+rename and fsync on every append+commit | **don't normalize the metamodel**: elements/relationships never become tables — they stay a Model document (JSONB row) + an events table, preserving AOEF passthrough and portability between tiers |
+| *Sessions/OTP locks* | hashed opaque tokens, in-memory or sessions table embedded | SQLite (`sessions.db`) when rate-limits/lockout need persistence across restarts | don't store OTP codes or session tokens in plaintext anywhere |
+| *Audit* | per-workspace audit ladder in the event log, hash-chained (§2.3) | Postgres when so many workspaces exist that a single audit table + per-index query is useful | don't write the audit log *beside* your event log; ADR 0004 keeps them one and the same chain |
+| *Server config (mail, keys)* | `data/config.json` with write-only API-key fields (masked on read; env bootstrap only) | — | never GET the raw key material back out via API once saved |
+
+**Why not "just use Postgres everywhere now"**: it solves problems today's design already
+prevents (whole-file rewrites / cross-workspace blast radius), and it would *add* problems
+we don't have (schema migration surface between formats that the single-document model can
+trivially avoid by design; a second persistence layer to keep in sync with the event-log
+invariants for no safety gain). What matters for the "safe against corruption" question is:
+
+1. **Logical corruption can't enter**: every op/model write goes through `validateModel`
+   before being persisted (already true, and ADR 0004 extends it from whole-model PUTs to
+   individual ops — bad writes never land, so they can't corrupt anything).
+2. **Physical corruption is contained and self-healing**: append-only shards + periodic
+   snapshots + tmp/rename atomic writes + fsync-on-append + hash-chained events = a torn
+   write at worst kills the last line of one shard, discovered by hash-chain mismatch and
+   fixed from the prior snapshot + prior events. Quarantine on corrupt-parse already
+   exists; add `openarch admin verify-store` (boot-check + CLI: replay each workspace's
+   events against its newest snapshot and report diffs) and `openarch admin restore
+   <workspace> [--at seq]` for the rare manual rollback.
+3. **Backups are boring**: a tier-2 backup is the snapshots + a `config.json` minus API
+   keys — users export/import all via UI; restore = copy snapshots back and replay from
+   there; every workspace recovers independently, one bad workspace never stops another
+   from booting.
+
+The invariant conclusion: **per-workspace event-sourced files first; reach for SQLite/Postgres
+per-concern when scale demands it; and keep the Model itself forever a document.** That keeps
+tier-2 safe, portable to tiers 1/3, and AOEF-faithful without inventing a second meta-model.
+
+### 11.4 The immediate build order for tier 2 (the login-first sequence)
+
+| Step | Ships | Test gates |
+|---|---|---|
+| A1 | `POST /a/otp/request+verify` + hashed session store + HttpOnly cookie + middleware that *requires* a session on every route | integration: request/verify/lifecycle/lockout/no-enumeration; a run of the **existing** suite re-run with the middleware on must remain green |
+| A2 | The endpoint-parity fixture matrix runner (stranger/auth/viewer/editor/owner × every route) wired into CI; new routes **must** add rows | suite self-audits its coverage so drift is a red build |
+| A3 | `verify-store` CLI (replay vs snapshot) + a kill-mid-write corruption lab test in CI (a real SIGKILL storm against the append path, then boot) | the server must boot clean every time |
+| A4 | Mail (Resend + SMTP both, runtime from-address) — §9.2 as amended by §10.4 | Mailpit round-trip + masked-key API test |
+| A5 | `admin backup/restore/verify-store` CLI + manifest/checksum + `--at seq` point-in-time restore — §12 | the whole §12.4 gate table, incl. the kill-storm and fresh-volume equivalence tests |
+
+
+---
+
+## 12. Backup & restore — the runbook (answers "how do we backup/restore the instance?")
+
+One design principle drives everything here: **in tier 2, backup = copy event-sourced files,
+restore = copy them back and replay.** Because the store is append-only shards + periodic
+snapshots (§10.2) with hash-chained events, backups need **no locks, no quiesce point, and
+no database dumps** — a copy of the data directory is automatically crash-consistent for
+every workspace whose writes follow those rules, and the verify step both proves it and
+repairs it from an earlier point if a shard was torn mid-copy.
+
+### 12.1 What is in a backup (and what is deliberately out)
+
+| Artifact | In backup | Notes |
+|---|---|---|
+| `workspaces/<id>/events/*.jsonl` | ✅ | the canonical history — audit trail, version history, and op attribution ride along inside it (ADR 0004) |
+| `workspaces/<id>/snapshots/*.model.json` | ✅ | native Model at snapshot points; these are what tiers 1/3 and UI import understand directly |
+| `workspaces/<id>/meta.json` | ✅ | members, group→role, org, retention — access control restores *exactly* as it was |
+| `workspaces/<id>/tombstones.json` | ✅ | governance traceability (reversed ops + reasons) |
+| `data/users.json` (SCIM) | ✅ | contains `userName` — PII; the anonymise flag applies |
+| `data/config.json` | ⚠️ **minus API keys** | from-address/retention/caps yes; mail provider keys are **masked out by default** and re-entered on restore (`openarch admin backup --include-secrets` exists for the rare encrypted-backup case, §2.1 AES-256-GCM) |
+| Sessions & OTP lockouts | ❌ never | ephemeral by design; after a restore everyone re-logs (which is *correct*: sessions shouldn't survive a restore across machines) |
+| Crash journal (tier 1/3 browsers) | ❌ never | browser-side recovery, not a server artifact |
+
+**Privacy note for backups**: they contain PII (display names, emails in invite/SCIM records,
+comment authors, audit actors) — so the rotation policy in `docs/privacy.md` must name
+backups explicitly, and `--anonymise` (§2.2) gives a PII-scrubbed export for anything leaving
+the org. The honest GDPR trade: right-to-erasure applies to *live + backups*; with rotation
+(§12.3) old backups age out on a known schedule, which is the documented answer instead of
+pretending un-deletable backups don't exist.
+
+### 12.2 The three restore granularities
+
+1. **Whole instance** (host dies / volume lost): restore the tar → `openarch admin
+   verify-store` on boot and via CLI (replays every workspace's events against its newest
+   snapshot; hash-chain mismatches pinpoint exactly which shard tore and replay repairs from
+   the prior snapshot + surviving events). Workspaces are independent folders, so **one
+   broken workspace never blocks the others from booting** — the blast radius stays
+   per-workspace, not instance-wide.
+2. **One workspace** (bad edit, corrupted shard, ransomware-touched subset): stop the server
+   (or lock the workspace), replace `workspaces/<id>/`, verify, continue. Selective restore
+   is *the* reason the store is per-workspace folders, not one `models.json` file.
+3. **Point-in-time** (undo an hour-long mistake without touching the rest):
+   `openarch admin restore <workspace> --at <seq>` = take latest snapshot ≤ seq, replay events
+   up to seq, write the result as a new snapshot + a *reversal op* (so history stays honest —
+   a restore is an event in the log, never a history rewrite). This is what an event log buys
+   over both a static file and a database dump: file backups give you *yesterday*; the log
+   gives you *3:42 PM Friday*.
+
+**Cross-tier restore** is the same act: every snapshot inside a backup is a tier-1/3-openable
+native model file. A team-server workspace restore into a solo folder = copy the snapshot out.
+A solo-folder workspace onto a server = `snapshot_import` op (§10.3). One format everywhere
+means backups and migration are *not separate features*.
+
+### 12.3 The commands (CLI pack already ships the bundling pattern)
+
+```bash
+openarch admin backup [dir] [--include-secrets] [--anonymise] [--key <hex>]
+#   → openarch-backup-YYYYMMDD-HHMMSS.tar(.gz) + a manifest.json
+#     (per-file sha256 — restore refuses to replay against a checksum mismatch)
+openarch admin restore <archive.tar> [--workspace <id>] [--at <seq>] [--dry-run]
+#   --workspace = the surgical path; --dry-run = verify + report only
+openarch admin verify-store           # replay-vs-snapshot check for every workspace
+```
+
+Scheduling is intentionally **not a server daemon**: the operator rules a cron/systemd-timer
+(or a compose service) calling `openarch admin backup` to a mounted target — external
+schedulers are boring, debuggable, and don't widen the server process's surface. Retention
+(N daily / M weekly) is the operator's timer policy, documented in `docs/deployment.md`; the
+backup format is an unencrypted-by-default tar so restic/rsync-level tooling also just works
+on it, with `--key` for the encrypted variant.
+
+### 12.4 The test gates (backup is a feature, so it gets feature tests)
+
+| Test | Asserts |
+|---|---|
+| Backup-restore equivalence in CI | boot seeded server → make concurrent writes → `admin backup` → restore into a *fresh* empty volume → every workspace: same model, same members, same audit chain; sessions are gone |
+| Kill-storm backup | SIGKILL the server mid-append, run `admin backup`, restore, verify passes (a torn last event line is detected by the hash chain and replay repairs from snapshot — never a silent bad state) |
+| Surgical restore | corrupt ONE workspace's shard, restore just that workspace from the backup, others untouched |
+| `--at seq` point-in-time | restore to midnight, confirm the reversal op exists in the log and later events are preserved beyond it |
+| Secrets masking | backup manifest/config contains no key material without `--include-secrets`; with it, the archive is AES-GCM encrypted |
+| `--anonymise` | no email/subject survives in the anonymised archive (a redaction grep test, not an eyeball check) |
+
+### 12.5 Tiers 1 and 3, one paragraph each
+
+**Tier 1** (folder mode): the folder *is* the live backup — backing up = any file sync of the
+attached folder (or `Export all`), restore = point the app at a restored copy and re-grant
+permission; journal + `updatedAt` stamps mean the app reconciles rather than overwrites. Tier 3
+(public webapp, browser mode) makes the same point the other way: no host-side backup exists
+*because no host-side data exists* — the UI's nudge is folder mode (§9.3), where the user's
+own sync solution becomes their DR plan, and `Export all` is the manual escape hatch.
