@@ -20,6 +20,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Enforce route parity (E1)
+        run: OPENARCH_ENFORCE_ROUTE_PARITY=true npx tsx apps/server/src/index.ts &
+        timeout-minutes: 1
       - run: npm run build
       # Bundle budget: keep the eagerly-loaded JS under 1.4 MB (entry+vendor+flow)
       - name: Bundle the npx CLI (smoke)
