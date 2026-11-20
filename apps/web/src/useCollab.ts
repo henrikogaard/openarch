@@ -1,4 +1,5 @@
 import { getAccessToken, setAccessToken } from '@openarch/repository';
+import type { Op } from '@openarch/core';
 import { useEffect, useRef, useState } from 'react';
 
 export interface PresenceUser {
@@ -13,6 +14,7 @@ export type CollabEvent =
   | { type: 'comment'; comment: { id: string; author: string; body: string } }
   | { type: 'saved'; version: number; by: string; restore?: boolean }
   | { type: 'focus'; subject: string; displayName: string; elementId?: string }
+  | { type: 'ops'; workspaceId: string; by?: string; ops: Op[] }
   | { type: 'pong' };
 
 export { getAccessToken, setAccessToken };

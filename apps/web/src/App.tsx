@@ -81,6 +81,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import GitConfigDialog, { type GitConfig } from './components/GitConfigDialog';
 import { ICON_PACKS } from './iconPacks';
 import { journalClear, journalRead, journalWrite } from './journal';
+import { useOps } from './useOps';
 import { getAccessToken, setAccessToken, useCollab } from './useCollab';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
@@ -355,6 +356,9 @@ export default function App() {
       if (event.type === 'saved' && event.by !== 'You') {
         notify(`${event.by} saved revision v${event.version}${event.restore ? ' (restore)' : ''}`);
       }
+      if (event.type === 'ops' && event.ops.length) {
+        for (const op of event.ops) ops.receiveOp(op, event.by);
+      }
     },
   });
 
@@ -362,6 +366,30 @@ export default function App() {
     setStatus(message);
     window.setTimeout(() => setStatus('Ready'), 5000);
   }, []);
+
+  // C3 client: ops go straight to the server endpoint (per-op validated both
+  // sides), and incoming RT ops project live onto the open canvas below.
+  const ops = useOps({
+    enabled: mode === 'server' && route === 'workspace' && Boolean(model),
+    workspaceId: model?.id,
+    getModel: () => modelRef.current,
+    commitModel: (next) => commit(() => next),
+    postOps: async (id, batch) => {
+      const response = await fetch(`${apiUrl}/models/${encodeURIComponent(id)}/ops`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ops: batch }),
+      });
+      if (!response.ok) throw new Error(`ops ${response.status}`);
+      return (await response.json()) as {
+        applied: number;
+        rejected: Array<{ seq: number; rule: string; message: string }>;
+        version: number;
+      };
+    },
+    notify,
+  });
+
 
   const commit = useCallback((updater: (current: Model) => Model, label?: string) => {
     const current = modelRef.current;
