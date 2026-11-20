@@ -77,13 +77,13 @@ describe('ops engine (C1)', () => {
     expect(() => applyOp(model, { kind: 'view.delete', ref: 'view-overview', after: {} })).toThrow(OpError);
   });
 
-  it('ops are idempotent-keyed and serialize/parse losslessly', () => {
+  it('ops are idempotent-keyed and serialize/parse losslessly', async () => {
     const actor = 'someone';
     const op: Op = { kind: 'element.update', ref: 'e-portal', after: { name: 'Portal v2' } };
-    const key1 = idempotencyKey(actor, op);
-    const key2 = idempotencyKey(actor, { ...op });
+    const key1 = await idempotencyKey(actor, op);
+    const key2 = await idempotencyKey(actor, { ...op });
     expect(key1).toBe(key2); // same payload → same key
-    expect(idempotencyKey('other-actor', op)).not.toBe(key1);
+    expect(await idempotencyKey('other-actor', op)).not.toBe(key1);
 
     const parsed = parseOp(serializeOp(op));
     expect(parsed.kind).toBe(op.kind);

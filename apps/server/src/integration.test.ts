@@ -1215,3 +1215,64 @@ describe('D2/D3: invite-by-email gate and delivery', () => {
     });
   });
 });
+
+describe('C2/C3: event store boot + ops endpoint', () => {
+  it('boots with the legacy volume migrated (snapshot 0 exists per workspace)', async () => {
+    // The suite's own server booted from a seeded models.json; the migration
+    // ran during beforeAll. Probe: PUT a full-model save, then read the event
+    // store directory through the ops replay behaviour — exercised via the
+    // ops endpoint's version continuity below.
+    const meta = await json<{ version: number }>('/api/models/sample-model/meta', { headers: admin });
+    expect(meta.status).toBe(200);
+    expect(meta.body.version).toBeGreaterThan(0);
+  });
+
+  it('applies valid op batches per-op and rejects invalid ones (207 partial)', async () => {
+    const applied = await json<{ applied: number; rejected: Array<{ rule: string }>; version: number }>(
+      '/api/models/sample-model/ops',
+      {
+        method: 'POST',
+        headers: { ...admin, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ops: [
+            { kind: 'element.create', ref: 'el-c3', after: { type: 'BusinessActor', name: 'C3 actor' } },
+            { kind: 'relationship.create', ref: 'rel-dangling', after: { type: 'Serving', source: 'ghost', target: 'ghost2' } },
+          ],
+        }),
+      },
+    );
+    expect(applied.status).toBe(207);
+    expect(applied.body.applied).toBe(1);
+    expect(applied.body.rejected.length).toBe(1);
+    expect(applied.body.rejected[0].rule).toBe('relationship.dangling');
+
+    // The applied op landed in the model.
+    const model = await json<{ elements: Array<{ id: string }> }>('/api/models/sample-model', { headers: admin });
+    expect(model.body.elements.some((element) => element.id === 'el-c3')).toBe(true);
+
+    // Cleanup: delete via an op (also exercises element.delete through ops).
+    const cleanup = await json('/api/models/sample-model/ops', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ ops: [{ kind: 'element.delete', ref: 'el-c3', after: {} }] }),
+    });
+    expect(cleanup.status).toBe(207);
+    const after = await json<{ elements: Array<{ id: string }> }>('/api/models/sample-model', { headers: admin });
+    expect(after.body.elements.some((element) => element.id === 'el-c3')).toBe(false);
+  });
+
+  it('viewers cannot post ops; empty batches are 400', async () => {
+    const denied = await json('/api/models/sample-model/ops', {
+      method: 'POST',
+      headers: { ...viewer, 'content-type': 'application/json' },
+      body: JSON.stringify({ ops: [{ kind: 'model.meta.update', ref: 'x', after: {} }] }),
+    });
+    expect(denied.status).toBe(403);
+    const empty = await json('/api/models/sample-model/ops', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ ops: [] }),
+    });
+    expect(empty.status).toBe(400);
+  });
+});

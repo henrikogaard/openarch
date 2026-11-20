@@ -41,6 +41,8 @@ import { OtpStore, SessionStore, sessionCookie } from './sessions';
 import { auditRouteParity, parsePrintedRoutes } from './parity';
 import { buildMailAdapter, type MailAdapter } from './mail';
 import { buildAuthorizationUrl, exchangeCode, PkceStore, s256, type OidcSessionInfo } from './oidc';
+import { eventStoreRoot, migrateLegacyVolume, WorkspaceEventStore } from './events';
+import { buildOpsFromDiff } from './opdiff';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import {
@@ -429,6 +431,19 @@ function persistToDisk(): void {
 
 loadFromDisk();
 
+// C2: migrate the whole legacy volume (snapshot 0 per workspace) and keep
+// per-workspace event-store handles for op logging + restore.
+const eventStores = new Map<string, WorkspaceEventStore>();
+(function migrateToEventStore(): void {
+  const root = eventStoreRoot(dataFile);
+  const records = [...workspaces.values()].map((workspace) => ({ model: workspace.model }));
+  const migrated = migrateLegacyVolume(dataFile, records, () => undefined);
+  for (const [id, store] of migrated) eventStores.set(id, store);
+  // Workspaces created AFTER boot register lazily.
+  void root;
+})();
+
+
 const app = Fastify({ logger: true });
 /**
  * CORS origins: defaults to the local dev servers only — reflecting arbitrary
@@ -736,6 +751,7 @@ app.put('/api/models/:id', async (request, reply) => {
   // models no matter which client (web, MCP, curl) sends them.
   const problem = modelWriteProblem(model);
   if (problem) return reply.code(400).send({ error: problem });
+  const preSaveModel = workspace.model;
   workspace.model = model;
   workspace.version += 1;
   workspace.updatedAt = new Date().toISOString();
@@ -759,6 +775,26 @@ app.put('/api/models/:id', async (request, reply) => {
     `Saved revision ${workspace.version} (${model.elements.length} elements)`,
   );
   persistToDisk();
+  // C2 compat: the whole-model save decomposes into ops so the event log is
+  // complete from day one (spec §5 C2); a rejection here means the log is
+  // paused, never divergent — the workspace model above is already validated.
+  try {
+    const store = eventStores.get(id) ?? (() => {
+      const fresh = new WorkspaceEventStore(eventStoreRoot(dataFile), id);
+      if (!fresh.exists()) fresh.initialize(model);
+      eventStores.set(id, fresh);
+      return fresh;
+    })();
+    const compatOps = buildOpsFromDiff(preSaveModel, model);
+    for (const op of compatOps) {
+      const appended = store.append(workspace.model, op, actor.subject);
+      if (appended.result.ok) {
+        broadcastEvent(id, { type: 'ops', workspaceId: id, ops: [op] });
+      }
+    }
+  } catch (error) {
+    app.log.warn(`event-log append skipped for ${id}: ${error instanceof Error ? error.message : String(error)}`);
+  }
   broadcastEvent(workspace.model.id, {
     type: 'saved',
     version: workspace.version,
@@ -1039,6 +1075,71 @@ app.post('/api/admin/mail/test', async (request, reply) => {
   } catch (error) {
     return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
   }
+});
+
+
+// ── Op endpoint (spec C3) — per-op apply-or-reject, live broadcast ──────────
+
+app.post('/api/models/:id/ops', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner', 'editor']);
+  if (!actor) return;
+  const body = (request.body ?? {}) as { ops?: unknown[] };
+  const incoming = Array.isArray(body.ops) ? body.ops : [];
+  if (incoming.length === 0) return reply.code(400).send({ error: 'ops array is required' });
+  if (incoming.length > 1000) return reply.code(400).send({ error: 'op batches are capped at 1000' });
+
+  const store = eventStores.get(workspace.model.id) ?? (() => {
+    const fresh = new WorkspaceEventStore(eventStoreRoot(dataFile), workspace.model.id);
+    if (!fresh.exists()) fresh.initialize(workspace.model);
+    eventStores.set(workspace.model.id, fresh);
+    return fresh;
+  })();
+
+  const rejected: Array<{ seq: number; rule: string; message: string }> = [];
+  let current = workspace.model;
+  let version = store.readMeta().version;
+  let index = 0;
+  for (const raw of incoming) {
+    index += 1;
+    const op = raw as never as Parameters<typeof store.append>[1];
+    if (!op || typeof (op as { kind?: unknown }).kind !== 'string') {
+      rejected.push({ seq: index, rule: 'op.malformed', message: 'op is missing kind' });
+      continue;
+    }
+    const appended = store.append(current, op, actor.subject);
+    if (!appended.result.ok) {
+      const first = appended.result.issues?.find((issue) => issue.severity === 'error');
+      rejected.push({ seq: index, rule: first?.rule ?? 'op.invalid', message: first?.message ?? 'rejected' });
+      continue;
+    }
+    current = appended.model;
+    version = appended.result.version;
+    broadcastEvent(workspace.model.id, { type: 'ops', workspaceId: workspace.model.id, ops: [op] });
+  }
+
+  if (rejected.length === 0) {
+    // All applied: commit the projected model to the workspace + persist.
+    workspace.model = current;
+    workspace.version += 1;
+    workspace.updatedAt = new Date().toISOString();
+    workspace.updatedBy = actor.subject;
+    audit(workspace, actor.subject, 'update', `Applied ${incoming.length} op(s) (event v${version})`);
+    persistToDisk();
+    return reply.code(207).send({ applied: incoming.length, rejected: [], version: workspace.version });
+  }
+  // Per-op verdicts: 207 with the reject list (the spec's body shape).
+  const appliedCount = incoming.length - rejected.length;
+  if (appliedCount > 0) {
+    workspace.model = current;
+    workspace.version += 1;
+    workspace.updatedAt = new Date().toISOString();
+    workspace.updatedBy = actor.subject;
+    audit(workspace, actor.subject, 'update', `Applied ${appliedCount}/${incoming.length} op(s)`);
+    persistToDisk();
+  }
+  return reply.code(207).send({ applied: appliedCount, rejected, version: workspace.version });
 });
 
 // ── Named tokens ("People & tokens", A2) — admin only ────────────────────────

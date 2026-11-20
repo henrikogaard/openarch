@@ -1,4 +1,16 @@
-import { createHash } from 'node:crypto';
+// Web-safe hash: the browser needs this module too, so prefer the
+// SubtleCrypto API when available and fall back to node:crypto server-side.
+async function digestHex(content: string): Promise<string> {
+  if (typeof globalThis.crypto?.subtle === 'object') {
+    const bytes = new TextEncoder().encode(content);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+  }
+  const { createHash } = await import('node:crypto');
+  return createHash('sha256').update(content).digest('hex');
+}
 import type {
   ArchiElement,
   Bounds,
@@ -344,9 +356,9 @@ function applyKind(model: Model, op: Op): Model {
 }
 
 /** Deterministic idempotency key (spec §2): same actor+kind+ref+payload twice = same op. */
-export function idempotencyKey(actor: string, op: Op): string {
+export async function idempotencyKey(actor: string, op: Op): Promise<string> {
   const canonical = JSON.stringify({ actor, kind: op.kind, ref: op.ref, after: op.after });
-  return createHash('sha256').update(canonical).digest('hex');
+  return digestHex(canonical);
 }
 
 /** Serialize/parses op lines for shards (spec §2 op format). */

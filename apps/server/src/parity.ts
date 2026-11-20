@@ -51,6 +51,7 @@ export const ROUTE_EXPECTATIONS: RouteExpectation[] = [
   { method: 'POST', path: '/api/models', minRole: 'editor', auth: 'auth-required' },
   { method: 'GET', path: '/api/models/:id', minRole: 'viewer', auth: 'auth-required' },
   { method: 'PUT', path: '/api/models/:id', minRole: 'editor', auth: 'auth-required' },
+  { method: 'POST', path: '/api/models/:id/ops', minRole: 'editor', auth: 'auth-required' },
   { method: 'DELETE', path: '/api/models/:id', minRole: 'owner', auth: 'auth-required' },
   { method: 'GET', path: '/api/models/:id/meta', minRole: 'viewer', auth: 'auth-required' },
   { method: 'GET', path: '/api/me', minRole: 'authenticated', auth: 'auth-required' },
