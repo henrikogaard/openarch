@@ -2454,3 +2454,8 @@ table.matrix td.filled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.presence-strip.offline {
+  color: #b42318;
+  border-color: #f59e0b;
+}

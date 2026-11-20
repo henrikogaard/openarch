@@ -85,6 +85,7 @@ import GitConfigDialog, { type GitConfig } from './components/GitConfigDialog';
 import { ICON_PACKS } from './iconPacks';
 import { journalClear, journalRead, journalWrite } from './journal';
 import { useOps } from './useOps';
+import { OfflineError, ReauthError, withErrorClass } from './sessionErrors';
 import { getAccessToken, setAccessToken, useCollab } from './useCollab';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
@@ -213,6 +214,8 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [undoEntries, setUndoEntries] = useState<UndoEntry[]>([]);
   const [conflict, setConflict] = useState<{ currentVersion?: number; current?: Model } | null>(null);
+  const [reauthPrompt, setReauthPrompt] = useState(false);
+  const [connectivity, setConnectivity] = useState<'online' | 'offline'>('online');
   const [onboardingOpen, setOnboardingOpen] = useState(() => !localStorage.getItem('openarch-onboarded'));
   const [createSignal, setCreateSignal] = useState(0);
   const [importSignal, setImportSignal] = useState(0);
@@ -251,6 +254,17 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() =>
     localStorage.getItem('openarch-theme') === 'dark' ? 'dark' : 'light',
   );
+
+  useEffect(() => {
+    const goOnline = () => setConnectivity('online');
+    const goOffline = () => setConnectivity('offline');
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -769,7 +783,7 @@ export default function App() {
       const current = modelRef.current;
       if (!current || readOnly) return;
       try {
-        await repository.saveModel(current, options.forceVersion ?? modelVersion);
+        await withErrorClass(() => repository.saveModel(current, options.forceVersion ?? modelVersion));
         await syncVersion(current.id);
         await refreshWorkspaces();
         // Only update save-state if we are still on the same workspace —
@@ -791,6 +805,15 @@ export default function App() {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        if (error instanceof ReauthError) {
+          setReauthPrompt(true);
+          notify('Session expired — sign in again to keep your changes');
+          return;
+        }
+        if (error instanceof OfflineError) {
+          notify('Not sent yet: changes stay in this tab — the server will be retried');
+          return;
+        }
         if (/conflict/i.test(message)) {
           const conflictError = error as Error & { currentVersion?: number; current?: Model };
           setConflict({ currentVersion: conflictError.currentVersion, current: conflictError.current });
@@ -1625,6 +1648,32 @@ export default function App() {
           </div>
         )}
 
+        {reauthPrompt && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Sign in again">
+            <div className="modal">
+              <header className="modal-header">
+                <h2>Session expired</h2>
+                <button className="icon-button" onClick={() => setReauthPrompt(false)} aria-label="Close">×</button>
+              </header>
+              <div className="modal-body">
+                <p>Your changes are safe in this tab. Sign in again to continue saving to the server.</p>
+              </div>
+              <footer className="modal-footer">
+                <button onClick={() => setReauthPrompt(false)}>Work offline for now</button>
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    setReauthPrompt(false);
+                    setTokenPromptOpen(true);
+                  }}
+                >
+                  Sign in again
+                </button>
+              </footer>
+            </div>
+          </div>
+        )}
+
         {shortcutHelpOpen && <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />}", 1)
         {historyOpen && (
           <UndoTimeline
@@ -1722,7 +1771,10 @@ export default function App() {
               )}
               <span className="status" title={status} aria-live="polite">{status}</span>
               {mode === 'server' && route === 'workspace' && (
-                <span className="presence-strip" title={collab.status === 'live' ? 'Live collaboration connected' : collab.status}>
+                <span
+                  className={`presence-strip ${connectivity === 'offline' ? 'offline' : ''}`}
+                  title={connectivity === 'offline' ? 'Server unreachable — changes stay queued' : collab.status === 'live' ? 'Live collaboration connected' : collab.status}
+                >
                   {collab.status === 'live' ? '●' : '○'}
                   {collab.presence.length > 1
                     ? collab.presence
