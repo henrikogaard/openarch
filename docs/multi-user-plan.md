@@ -277,3 +277,134 @@ Steps 1–3 are mode-2 complete (a small team can run entirely without an IdP); 
 mode-3 complete. Every step is one PR against the D-D standard, and none of them changes the
 permission matrix in 8.4 — additions to capabilities require updating this document first.
 
+---
+
+## 9. The three product tiers (2026-11-20) — storage, mail invites, bring-your-own public app
+
+Elaborates the proposal: **solo-local · team-server · public BYO webapp**. All three share one
+rule from the invariants: the UI only ever talks to a `ModelRepository` (AGENTS §6). Every store
+below is therefore just another adapter — no forked product, no divergent metamodel.
+
+### 9.1 Tier 1 — Solo local (default): where data lives, and how it survives many computers
+
+**Today**: workspaces in IndexedDB per browser profile (+ crash journal + PWA shell). Real
+gaps: browser storage can be evicted by quota/ITP policies, and profiles don't roam between
+machines. Both fixes come from one feature: **attach a real folder**.
+
+```
+Settings → Storage →
+  ● Browser (default — zero setup, everything local, crash journaled)
+  ○ Local folder      (File System Access API — real files you can see, sync, back up)
+  ○ WebDAV share      (Nextcloud / Syncthing+webdav / any DAV server)   [P1, same adapter]
+  ○ Git repository    (already shipped — GitHub Contents store)
+```
+
+- **Local folder** (`showDirectoryPicker`, Chromium desktop ≥ 86; Firefox/Safari fall back to
+  browser mode with an explanatory note): the app mirrors every workspace to
+  `<folder>/models/<id>.json` (the same schema-versioned native JSON the Git adapter already
+  round-trips) plus `<folder>/journal/<id>.json` mirrors of the crash journal. The directory
+  handle is persisted in IndexedDB, so "reattach later" is one permission re-grant click; on a
+  different computer you point the app at the (synced) folder and it adopts the files — ids are
+  stable.
+- **Why "database" is the wrong tool here**: browser-local SQLite (sql.js/WASM) adds complexity
+  without solving roaming — it is still per-profile blob storage, evictable like IndexedDB. A
+  *server* database is the right answer only when multiple humans write concurrently — that is
+  tier 2. The JSON folder **is** the database: schema-versioned, human-diffable in PRs, and
+  already the format every other adapter (Git, server, backup-all) shares.
+- **The file-share question, answered honestly**: a synced folder with **one writer at a
+  time** (you, from several machines, via Syncthing/Dropbox/Nextcloud) is fully supported and
+  safe — atomic writes (`tmp`+rename, already our server pattern), per-file `updatedAt`
+  stamps, and the crash journal mean you lose at most seconds. A folder with **multiple
+  simultaneous users is a corruption machine** — SMB/NFS/DAV give neither locks nor events.
+  Multi-writer is tier 2. Enforce honestly instead of pretending: on open, the folder adapter
+  checks the file's `updatedAt` against the last state it wrote; on drift it opens the
+  **already-built three-way review** (per-entity mine/theirs + semantic merge), never a silent
+  last-writer-wins. That conflict machinery was built for the server — the folder reuses it
+  verbatim.
+- **Fail-proofing tier 1 explicitly**: eviction-proof (files outside IndexedDB), IT-proof
+  (plain JSON you can copy), crash-proof (journal ships already), quota-proof (no browser
+  cap), and `Export all` remains the escape hatch. Public webapp-tier users get the identical
+  fix (§9.3).
+
+### 9.2 Tier 2 — Team server: email invites via Resend/SMTP (amending the "no email" stance)
+
+The earlier "no email ever" line was a privacy default, not a law; the owner's call is that
+**operators who want email invites get them**. Doing it safely:
+
+1. **Mail adapter, pluggable, validated before first send.** `OPENARCH_MAIL_PROVIDER` =
+   `resend` (`OPENARCH_RESEND_API_KEY`, `RESEND_FROM`) or `smtp` (`SMTP_HOST/PORT/USER/PASS`).
+   Dev/test compose gains a **Mailpit** service so acceptance tests run offline.
+2. **Setup screen (admin-only, Settings → Email)**: shows detected provider + from-address
+   health; a **"Send test email"** that must round-trip before invite-by-email is enabled —
+   the UI refuses to enable sending until the test is delivered (Resend also demands a
+   verified domain, and we surface its validation). No half-configured silent failures.
+3. **Invite flow, updated**: owner enters email + role → `invite { email, role, token,
+   invitedBy, expiresAt = 7d, acceptedAt }`; if mail is validated the accept URL is sent,
+   otherwise the owner copies the link out-of-band as today. **Acceptance is a magic link**:
+   - **OIDC mode**: the link prompts SSO login; membership is granted when the IdP's *verified
+     email claim* matches the invited address (exact match only — never domain-wide), else
+     manual code entry.
+   - **No-IdP mode**: the accept link opens a one-time join page that **issues the person
+     their own named access token** (shown once, download offered) and adds them as a member.
+     The no-passwords promise survives — "password" becomes "a token the server gave you at
+     join time"; there is no reset surface, and the token is hashed at rest.
+4. **Privacy rail-guards the email path adds** (recorded in `docs/privacy.md`):
+   - Email addresses are **PII**: invite records delete after
+     `OPENARCH_INVITE_RETENTION_DAYS` (default 30) post-expiry/acceptance; export/redaction
+     applies like any other record.
+   - Resend = a subprocessor: named in `docs/privacy.md`; self-hosted SMTP (same screen) is
+     the zero-subprocessor path.
+   - Anti-abuse: outstanding-invites cap per server, per-IP send rate limit, single-use 128-bit
+     tokens, accept lockout after N attempts; create/accept/revoke all audited (feeding the
+     §2.3 hash-chained log).
+5. Nothing in §8.4 changes — email changes **delivery**, not permissions: an invited editor is
+   the same editor; invites can still never mint an owner.
+
+### 9.3 Tier 3 — Public BYO webapp: "your data, our static file server"
+
+The publicly hosted deployment. The contract, printed on the tin: **the host stores nothing
+about you — no accounts, no database rows, no model bytes, no telemetry.** The app bundle is
+static (already CSP-auditable: no CDNs, no remote fonts, errors stay in your console, PWA
+cache-first).
+
+- **The storage picker is the tier-1 UI from §9.1 — that is the whole point.** A public-webapp
+  user picks Browser, **local folder**, WebDAV, Git, or *their own team server's URL* (with a
+  CORS note — their server must allow the public app's origin, which is why server CORS takes
+  explicit configured origins).
+- **"Attach my data, reattach later"** = the persisted directory handle on the *user's
+  machine* — the public host never sees the bytes. On a second computer, point at the synced
+  folder; the app adopts the files (ids stable, same reattach semantics as tier 1).
+- **Autosave/mirror**: the shipped autosave (1.5 s debounce, 15 s max-delay) drives the folder
+  mirror on every tick once folder mode is on.
+- **Honest non-goals**: no server-side "forgot workspace" recovery — Browser-mode data on the
+  public app is gone if site data is cleared; the UI says so plainly and nudges to folder
+  mode. No sync service ever ships from the public host.
+
+### 9.4 The tiers at a glance
+
+| Concern | 1. Solo local | 2. Team server | 3. Public webapp |
+|---|---|---|---|
+| Where the bytes live | Browser + your folder (or WebDAV/Git share) | Server volume (`models.json`) | User's browser + their folder |
+| Identity | none — you are you | tokens + OIDC + **email invites** | none — or *their own server's* identity |
+| Multi-user data | one writer at a time (conflict review on drift) | full (locking, 3-way review, presence) | one writer at a time (same as tier 1) |
+| Privacy contract | your machine | operator-run; PII/mail policy in privacy docs | nothing persisted or observed by the host |
+| Data risk & fix | quota eviction → folder mirror | operator ops (backups, encryption-at-rest §2.1) | user's choice; folder mode recommended |
+
+### 9.5 One conflict pipeline, all tiers
+
+Tier-1 folder drift and tier-2 409s both funnel into the same shipped machinery —
+`conflictEntries` + `ConflictReview` + `applyResolutions`. That is invariant 6 paying off:
+add a store, inherit the safety net.
+
+### 9.6 Build order (extends §8.6)
+
+| Step | Ships | Effort | Test gates |
+|---|---|---|---|
+| 6 | `FolderRepository` adapter (FS Access API) + Storage settings UI + mirror-on-autosave | M | Playwright (Chromium): attach → edit → reload → reattach; drift → conflict review opens; native files identical to `Export all` |
+| 7 | WebDAV adapter (same conflict path) — can defer | S–M | conformance vs local DAV server (container) or mock |
+| 8 | Mail: adapter + validated setup screen + email invites + magic-link accept + hashed token issuance (no-IdP) + `INVITE_RETENTION_DAYS` | M | integration: round-trip gate, single-use/lockout, retention deletion, audit chain; Mailpit compose |
+| 9 | Public-BYO hardening: CORS guidance for user servers, on-site privacy statement, static-bundle no-storage audit | S | CI lint: bundle contains no fetch/POST to the public origin's host |
+
+Decisions needed before step 8: Resend-first-then-SMTP vs both day one (recommend: adapter
+interface + Resend first, SMTP as a follow-up PR), and the from-address policy per deployment.
+
