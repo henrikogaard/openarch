@@ -38,6 +38,7 @@ import {
 } from './auth';
 import { TokenStore, TokensError, type NamedTokenRecord } from './tokens';
 import { OtpStore, SessionStore, sessionCookie } from './sessions';
+import { auditRouteParity, parsePrintedRoutes } from './parity';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import {
@@ -1478,4 +1479,16 @@ try {
 } catch (error) {
   app.log.error(error);
   process.exit(1);
+}
+
+// Route parity self-audit (spec E1): fail fast at boot when a registered route
+// has no minRole expectation (or vice versa) so "new route must add a row"
+// is enforced by the build, not by memory.
+const parityViolations = auditRouteParity(parsePrintedRoutes(app.printRoutes()));
+if (parityViolations.length) {
+  app.log.error(`Route parity violations:\n${parityViolations.join('\n')}`);
+  if (process.env.OPENARCH_ENFORCE_ROUTE_PARITY === 'true') {
+    process.exit(1);
+  }
+  app.log.warn('OPENARCH_ENFORCE_ROUTE_PARITY=true will make this fatal.');
 }

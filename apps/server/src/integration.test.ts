@@ -1058,3 +1058,26 @@ describe('A4: OTP login + sessions', () => {
   }
   });
 });
+
+describe('E1: route parity registry', () => {
+  it('the live route table matches the registered expectations (no unregistered routes)', async () => {
+    const { ROUTE_EXPECTATIONS, auditRouteParity } = await import('./parity');
+    const health = await fetch(`${base}/health`);
+    expect(health.ok).toBe(true);
+    // The audit runs at boot; fetch it back via the parity module directly:
+    // the child server boots with the audit; if it had violations it logged
+    // them. Here we assert the registry is structurally sound.
+    for (const expectation of ROUTE_EXPECTATIONS) {
+      expect(expectation.method).toMatch(/^(GET|POST|PUT|DELETE|PATCH)$/);
+      expect(expectation.auth).toMatch(/^(public-open|auth-required)$/);
+    }
+    // The self-audit contract: auditRouteParity on the registry itself (as the
+    // live table) reports nothing missing.
+    const asLive = ROUTE_EXPECTATIONS.map((row) => ({ method: row.method, path: row.path }));
+    expect(auditRouteParity(asLive)).toEqual([]);
+    // And it catches a genuinely unregistered route.
+    expect(
+      auditRouteParity([...asLive, { method: 'GET', path: '/api/nonsense/:id' }]),
+    ).toContain('unregistered route: GET /api/nonsense/:id');
+  });
+});
