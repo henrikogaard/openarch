@@ -1081,3 +1081,90 @@ describe('E1: route parity registry', () => {
     ).toContain('unregistered route: GET /api/nonsense/:id');
   });
 });
+
+describe('D1: mail adapter admin endpoints', () => {
+  it('GET returns masked config; PUT persists provider; test-send refuses unconfigured; secrets never echo', async () => {
+    // Baseline GET — admin only, masked.
+    const initial = await json<{ provider: string; resend?: { apiKeyMasked?: string } }>(
+      '/api/admin/mail',
+      { headers: admin },
+    );
+    expect(initial.status).toBe(200);
+
+    const strangerDenied = await json('/api/admin/mail', { headers: stranger });
+    expect(strangerDenied.status).toBe(403);
+
+    // Test-send without a provider configured → 400 with a clear reason.
+    const unConfigured = await json('/api/admin/mail/test', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ to: 'someone@example.com' }),
+    });
+    expect(unConfigured.status).toBe(400);
+    expect((unConfigured.body as { error: string }).error).toContain('No mail provider configured');
+
+    // PUT persists resend settings incl. API key; the response never contains it.
+    const put = await json('/api/admin/mail', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'resend',
+        fromName: 'OpenArch CI',
+        fromAddress: 'ci@example.com',
+        resend: { apiKey: 're_test_secret_key_123' },
+      }),
+    });
+    expect(put.status).toBe(200);
+    expect(JSON.stringify(put.body)).not.toContain('re_test_secret_key_123');
+
+    // GET reflects the config with a masked key only.
+    const after = await json<{ provider: string; fromAddress?: string; resend?: { apiKeyMasked?: string } }>(
+      '/api/admin/mail',
+      { headers: admin },
+    );
+    expect(after.body.provider).toBe('resend');
+    expect(after.body.fromAddress).toBe('ci@example.com');
+    expect(after.body.resend?.apiKeyMasked).toBe('…_123'); // last 4 of re_test_secret_key_123
+    expect(JSON.stringify(after.body)).not.toContain('re_test_secret_key_123');
+
+    // Config persisted across a restart is covered by the config-file format:
+    // the runtime file write is exercised by the PUT round trip above.
+  });
+
+  it('PUT rejects unknown providers; SMTP settings persist host/port/secure/user', async () => {
+    const bad = await json('/api/admin/mail', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'pigeon' }),
+    });
+    expect(bad.status).toBe(400);
+
+    const smtpPut = await json('/api/admin/mail', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'smtp',
+        fromAddress: 'smtp@example.com',
+        smtp: { host: 'localhost', port: 1025, secure: false, user: 'mailer', pass: 'smtp-pass' },
+      }),
+    });
+    expect(smtpPut.status).toBe(200);
+    const after = await json<{ provider: string; smtp?: { host?: string; port?: number; passMasked?: string } }>(
+      '/api/admin/mail',
+      { headers: admin },
+    );
+    expect(after.body.provider).toBe('smtp');
+    expect(after.body.smtp?.host).toBe('localhost');
+    expect(after.body.smtp?.port).toBe(1025);
+    expect(after.body.smtp?.passMasked).toBe('****');
+    expect(JSON.stringify(after.body)).not.toContain('smtp-pass');
+
+    // Restore provider to null so later tests are unaffected.
+    const reset = await json('/api/admin/mail', {
+      method: 'PUT',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: null }),
+    });
+    expect(reset.status).toBe(200);
+  });
+});

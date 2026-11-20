@@ -39,6 +39,7 @@ import {
 import { TokenStore, TokensError, type NamedTokenRecord } from './tokens';
 import { OtpStore, SessionStore, sessionCookie } from './sessions';
 import { auditRouteParity, parsePrintedRoutes } from './parity';
+import { buildMailAdapter, type MailAdapter } from './mail';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import {
@@ -138,7 +139,7 @@ const scimUsers = new Map<string, ScimUser>();
 
 // ── Runtime admin config (data/config.json) ──────────────────────────────────
 
-interface RuntimeConfig {
+export interface RuntimeConfig {
   version: number;
   auth: { bootstrapTokenHash?: string; generatedAt?: string };
   mail?: Record<string, unknown>;
@@ -203,6 +204,29 @@ if (authConfig.required) {
   bootstrapOwnerToken();
 }
 
+// Mail adapter (spec D1): built from runtime config; console fallback when
+// unconfigured. Rebuilt when the admin settings change so PUT takes effect
+// immediately. OTP's default sink switches to it once available.
+let mailAdapter: MailAdapter = await buildMailAdapter(readRuntimeConfig());
+async function refreshMailAdapter(): Promise<void> {
+  mailAdapter = await buildMailAdapter(readRuntimeConfig());
+  otpStore.mailSink = {
+    async sendLoginCode(email, code) {
+      const info = mailAdapter.describe();
+      const message = info.provider === 'console'
+        ? process.stderr.write(`OpenArch OTP for ${email}: ${code} (mail not configured; 10 min)\n`) as unknown as void
+        : await mailAdapter.send({
+            to: email,
+            subject: 'Your OpenArch login code',
+            text: `Your login code is ${code}. It expires in 10 minutes.`,
+          }) as unknown as void;
+      void message;
+    },
+  };
+}
+
+
+
 /** Invitation (spec A3): codes are 128-bit, hashed at rest, single-use, never owner-granting. */
 interface InviteRecord {
   id: string;
@@ -234,6 +258,8 @@ const INVITE_DEFAULT_CAP = 100;
 const sessionStoreFile = dataFile.replace(/[^/]*\\.json$/, '') + 'sessions.json';
 const sessionStore = new SessionStore(sessionStoreFile);
 const otpStore = new OtpStore();
+// Wire the mail-backed OTP sink now that both exist (console fallback until configured).
+await refreshMailAdapter();
 const SESSION_IDLE_DAYS = Math.max(1, Number(process.env.OPENARCH_SESSION_IDLE_DAYS) || 30);
 
 const tokenStoreFile = dataFile.replace(/[^/]*\.json$/, '') + 'tokens.json';
@@ -916,6 +942,94 @@ app.delete('/api/models/:id/saved-views/:viewId', async (request, reply) => {
   return reply.code(204).send();
 });
 
+
+
+// ── Mail admin (spec D1/D2) — admin only, masked secrets ────────────────────
+
+app.get('/api/admin/mail', async (request, reply) => {
+  const actor = requireAdmin(request, reply);
+  if (!actor) return;
+  const config = readRuntimeConfig();
+  const info = mailAdapter.describe();
+  const mail = (config.mail ?? {}) as Record<string, {
+    apiKey?: string; pass?: string; host?: string; port?: number; secure?: boolean; user?: string;
+  }>;
+  return {
+    ...info,
+    provider: info.provider,
+    fromName: mail.fromName,
+    fromAddress: mail.fromAddress,
+    replyTo: mail.replyTo,
+    resend: { apiKeyMasked: mail.resend?.apiKey ? `…${mail.resend.apiKey.slice(-4)}` : undefined },
+    smtp: {
+      host: mail.smtp?.host,
+      port: mail.smtp?.port,
+      secure: mail.smtp?.secure,
+      user: mail.smtp?.user,
+      passMasked: mail.smtp?.pass ? '****' : undefined,
+    },
+  };
+});
+
+app.put('/api/admin/mail', async (request, reply) => {
+  const actor = requireAdmin(request, reply);
+  if (!actor) return;
+  const body = (request.body ?? {}) as Record<string, unknown>;
+  const config = readRuntimeConfig();
+  const mail = (config.mail ?? {}) as Record<string, unknown>;
+  if (body.provider === 'resend' || body.provider === 'smtp') {
+    mail.provider = body.provider;
+  } else if (body.provider === null) {
+    mail.provider = null;
+  } else if ('provider' in body) {
+    return reply.code(400).send({ error: 'provider must be resend, smtp, or null' });
+  }
+  if (typeof body.fromName === 'string') mail.fromName = body.fromName.trim() || undefined;
+  if (typeof body.fromAddress === 'string') mail.fromAddress = body.fromAddress.trim() || undefined;
+  if (typeof body.replyTo === 'string') mail.replyTo = body.replyTo.trim() || undefined;
+  if (body.resend && typeof body.resend === 'object') {
+    const resend = body.resend as { apiKey?: string };
+    mail.resend = { ...(mail.resend as object), ...(resend.apiKey ? { apiKey: resend.apiKey.trim() } : {}) };
+  }
+  if (body.smtp && typeof body.smtp === 'object') {
+    const smtp = body.smtp as { host?: string; port?: number; secure?: boolean; user?: string; pass?: string };
+    mail.smtp = {
+      ...(mail.smtp as object),
+      ...(typeof smtp.host === 'string' ? { host: smtp.host.trim() } : {}),
+      ...(Number.isFinite(smtp.port) ? { port: Number(smtp.port) } : {}),
+      ...(typeof smtp.secure === 'boolean' ? { secure: smtp.secure } : {}),
+      ...(typeof smtp.user === 'string' ? { user: smtp.user } : {}),
+      ...(typeof smtp.pass === 'string' && smtp.pass ? { pass: smtp.pass } : {}),
+    };
+  }
+  config.mail = mail;
+  writeRuntimeConfig(config);
+  await refreshMailAdapter();
+  app.log.info(`admin ${actor.subject} updated mail config (provider=${mail.provider ?? 'unset'})`);
+  return mailAdapter.describe();
+});
+
+app.post('/api/admin/mail/test', async (request, reply) => {
+  const actor = requireAdmin(request, reply);
+  if (!actor) return;
+  const body = (request.body ?? {}) as { to?: string };
+  const to = String(body.to ?? '').trim();
+  if (!to.includes('@')) return reply.code(400).send({ error: 'to (email) is required' });
+  const info = mailAdapter.describe();
+  if (info.provider === 'console') {
+    return reply.code(400).send({ error: 'No mail provider configured (provider + from-address required first)' });
+  }
+  try {
+    const result = await mailAdapter.send({
+      to,
+      subject: 'OpenArch test email',
+      text: 'This is a delivery test from your OpenArch server. If you can read this, invite emails will work.',
+    });
+    return { delivered: result.delivered, providerMessageId: result.providerMessageId };
+  } catch (error) {
+    return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
 
 // ── Named tokens ("People & tokens", A2) — admin only ────────────────────────
 
