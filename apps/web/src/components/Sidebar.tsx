@@ -3,12 +3,12 @@ import { type Language, useTranslation } from '../i18n';
 
 interface SidebarProps {
   workspaceName: string;
-  mode: 'local' | 'server' | 'git';
+  mode: 'local' | 'server' | 'git' | 'folder';
   language: Language;
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
   onLanguageChange: (language: Language) => void;
-  onModeChange: (mode: 'local' | 'server' | 'git') => void;
+  onModeChange: (mode: 'local' | 'server' | 'git' | 'folder') => void;
   onHome: () => void;
   onImport: (file: File) => void;
   onExportAoef: () => void;

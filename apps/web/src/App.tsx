@@ -43,6 +43,7 @@ import {
 } from '@openarch/core';
 import {
   createGitHubFileStore,
+  FolderRepository,
   GitRepository,
   LocalRepository,
   NATIVE_SCHEMA_VERSION,
@@ -120,7 +121,7 @@ type AnalysisTab =
   | 'streams'
   | 'traceability'
   | 'timeline';
-type Mode = 'local' | 'server' | 'git';
+type Mode = 'local' | 'server' | 'git' | 'folder';
 
 interface MagicConnection {
   sourceNodeId: string;
@@ -258,6 +259,7 @@ export default function App() {
   const pasteCountRef = useRef(0);
 
   const [gitConfig, setGitConfig] = useState<GitConfig | null>(null);
+  const [folderHandle, setFolderHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [gitDialogOpen, setGitDialogOpen] = useState(false);
   const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
 
@@ -282,7 +284,61 @@ export default function App() {
     setMode(next);
     if (next === 'git' && !gitConfig) setGitDialogOpen(true);
     if (next === 'server' && !getAccessToken()) setTokenPromptOpen(true);
+    if (next === 'folder') void attachFolder();
   };
+
+  // B1 attach: showDirectoryPicker (Chromium), persist the handle so reloads
+  // reattach with one permission re-grant; drift → ConflictReview (§9.1/§9.5).
+  const attachFolder = async () => {
+    const picker = (window as { showDirectoryPicker?: (options?: { id?: string; mode?: string }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
+    if (!picker) {
+      notify('Folder storage needs a Chromium browser (use Browser/Git instead)');
+      setMode('local');
+      return;
+    }
+    try {
+      const handle = await picker.call(window, { id: 'openarch-models', mode: 'readwrite' });
+      setFolderHandle(handle);
+      // Persist the handle for reattach (best-effort in IndexedDB).
+      const { set: idbSet } = await import('idb-keyval');
+      await idbSet('openarch-folder-handle', handle);
+      refreshWorkspaces();
+      notify(`Attached folder: ${handle.name}`);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setMode('local');
+        return;
+      }
+      notify(`Could not attach folder: ${error instanceof Error ? error.message : String(error)}`);
+      setMode('local');
+    }
+  };
+
+  // Reattach on load when the browser kept permission.
+  useEffect(() => {
+    if (mode !== 'folder' || folderHandle) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { get: idbGet } = await import('idb-keyval');
+        const handle = await idbGet<FileSystemDirectoryHandle>('openarch-folder-handle');
+        if (handle && !cancelled) {
+          const query = (handle as unknown as { queryPermission?: (d: { mode: string }) => Promise<string> }).queryPermission;
+          if (query && (await query.call(handle, { mode: 'readwrite' })) === 'granted') {
+            setFolderHandle(handle);
+          } else {
+            notify('Folder attached: re-grant access to continue (open Storage settings)');
+          }
+        }
+      } catch {
+        // No cached handle — the picker flow handles it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, folderHandle]);
+
 
   useEffect(() => {
     modelRef.current = model;

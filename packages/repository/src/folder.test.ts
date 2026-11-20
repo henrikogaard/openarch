@@ -30,7 +30,7 @@ function fakeDir(files: Map<string, string>): FileSystemDirectoryHandle {
             getFile: () => {
               throw new Error('empty file');
             },
-          } as FileSystemFileHandleLike;
+          } as unknown as FileSystemFileHandleLike;
         }
         throw new Error(`NotFound: ${name}`);
       }
@@ -51,7 +51,7 @@ function fakeDir(files: Map<string, string>): FileSystemDirectoryHandle {
           if (!entry) throw new Error('empty file');
           return { lastModified: 0, text: async () => entry };
         },
-      } as FileSystemFileHandleLike;
+      } as unknown as FileSystemFileHandleLike;
     },
     // Minimal AsyncIterable: only files (our listModels consumes kind === 'file').
     async *values(): AsyncIterableIterator<{ kind: 'file' | 'directory'; name: string }> {
