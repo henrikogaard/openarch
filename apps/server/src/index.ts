@@ -43,6 +43,7 @@ import { buildMailAdapter, type MailAdapter } from './mail';
 import { buildAuthorizationUrl, exchangeCode, PkceStore, s256, type OidcSessionInfo } from './oidc';
 import { eventStoreRoot, migrateLegacyVolume, WorkspaceEventStore } from './events';
 import { buildOpsFromDiff } from './opdiff';
+import { ReplayAt } from './replay';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import {
@@ -1303,6 +1304,61 @@ app.post('/api/auth/logout', async (request, reply) => {
   if (token) sessionStore.revoke(token);
   reply.header('set-cookie', 'openarch_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0');
   return reply.code(204).send();
+});
+
+
+// ── C4: point-in-time restore + store verify (spec §5, plan §12) ───────────
+
+app.post('/api/models/:id/restore-at/:seq', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner', 'editor']);
+  if (!actor) return;
+  const { seq } = request.params as { id: string; seq: string };
+  const targetSeq = Number(seq);
+  if (!Number.isInteger(targetSeq) || targetSeq < 0) {
+    return reply.code(400).send({ error: 'seq must be a non-negative integer' });
+  }
+  const store = eventStores.get(workspace.model.id);
+  if (!store || !store.exists()) {
+    return reply.code(404).send({ error: 'No event history for this workspace (log started after its last save?)' });
+  }
+  // Resolve the file name from the URL form (`.ts` is compiled at runtime here).
+  const { ReplayAt } = await import('./replay');
+  const metaVersion = store.readMeta().version;
+  if (targetSeq > metaVersion) {
+    return reply.code(400).send({ error: `Workspace history only reaches seq ${metaVersion}` });
+  }
+  const replayed = ReplayAt.replayTo(store, targetSeq);
+  if (replayed.chainErrors.length) {
+    return reply.code(409).send({ error: 'Event history failed verification', details: replayed.chainErrors });
+  }
+  // Restore IS an event: snapshot the in-flight revision first (never rewrite).
+  workspace.snapshots ??= [];
+  workspace.snapshots.push({
+    id: `snapshot-${crypto.randomUUID()}`,
+    version: workspace.version,
+    createdAt: new Date().toISOString(),
+    label: `Pre-restore-at ${targetSeq} (revision ${workspace.version})`,
+    model: structuredClone(workspace.model),
+  });
+  if (workspace.snapshots.length > 50) {
+    workspace.snapshots.splice(0, workspace.snapshots.length - 50);
+  }
+  workspace.model = structuredClone(replayed.model);
+  workspace.model.id = workspace.model.id ?? (request.params as { id: string }).id;
+  workspace.version += 1;
+  workspace.updatedAt = new Date().toISOString();
+  workspace.updatedBy = actor.subject;
+  audit(workspace, actor.subject, 'restore', `Restored point-in-time seq ${targetSeq} as revision ${workspace.version}`);
+  persistToDisk();
+  broadcastEvent((request.params as { id: string }).id, {
+    type: 'saved',
+    version: workspace.version,
+    by: actor.subject,
+    restore: true,
+  });
+  return { modelId: (request.params as { id: string }).id, restoredAtSeq: targetSeq, version: workspace.version };
 });
 
 // ── Invites (spec A3) — owner-only create/revoke, self-service redeem ─────────
