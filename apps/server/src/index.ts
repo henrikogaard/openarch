@@ -1025,7 +1025,12 @@ app.post('/api/admin/mail/test', async (request, reply) => {
       subject: 'OpenArch test email',
       text: 'This is a delivery test from your OpenArch server. If you can read this, invite emails will work.',
     });
-    return { delivered: result.delivered, providerMessageId: result.providerMessageId };
+    const config = readRuntimeConfig();
+    const mail = (config.mail ?? {}) as Record<string, unknown>;
+    mail.confirmedTestAt = new Date().toISOString();
+    config.mail = mail;
+    writeRuntimeConfig(config);
+    return { delivered: result.delivered, providerMessageId: result.providerMessageId, emailDeliveryEnabled: true };
   } catch (error) {
     return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
   }
@@ -1159,15 +1164,52 @@ app.post('/api/models/:id/invites', async (request, reply) => {
     expiresAt: new Date(Date.now() + ttlDays * 86_400_000).toISOString(),
     failedAttempts: 0,
   };
+  // D3: email delivery only when configured AND round-trip tested (spec D2).
+  const emailConfig = readRuntimeConfig().mail as Record<string, unknown> | undefined;
+  const emailDeliveryEnabled =
+    Boolean(emailConfig?.confirmedTestAt) && ['resend', 'smtp'].includes(String(emailConfig?.provider ?? ''));
+  if (invite.email && !emailDeliveryEnabled) {
+    return reply.code(400).send({
+      error: 'Email delivery is not enabled: configure and validate a mail provider first (Settings → Email → Send test email).',
+    });
+  }
   workspace.invites.push(invite);
   audit(workspace, actor.subject, 'create', `Created ${role} invite ${invite.displayPrefix}…`);
   persistToDisk();
+  if (invite.email) {
+    try {
+      await mailAdapter.send({
+        to: invite.email,
+        subject: `Invitation: ${primaryText(workspace.model.name) || workspace.model.id}`,
+        text: [
+          `You have been invited to "${primaryText(workspace.model.name) || workspace.model.id}" as ${role}.`,
+          '',
+          `Open this link to join: ${request.protocol}://${request.hostname}/#invite=${code}`,
+          '',
+          `The code expires ${invite.expiresAt}. Single use.`,
+        ].join('\n'),
+      });
+    } catch (error) {
+      // The invite exists; delivery failure must be visible, but not swallow the create.
+      app.log.error(`invite email to ${invite.email} failed: ${error instanceof Error ? error.message : String(error)}`);
+      return reply.code(201).send({
+        id: invite.id,
+        code,
+        url: `${request.protocol}://${request.hostname}/#invite=${code}`,
+        role,
+        expiresAt: invite.expiresAt,
+        emailDelivered: false,
+        warning: 'Invite created, but the email failed to send — share the link manually.',
+      });
+    }
+  }
   return reply.code(201).send({
     id: invite.id,
     code,
     url: `${request.protocol}://${request.hostname}/#invite=${code}`,
     role,
     expiresAt: invite.expiresAt,
+    emailDelivered: Boolean(invite.email),
   });
 });
 
