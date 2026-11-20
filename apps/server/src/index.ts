@@ -40,6 +40,7 @@ import { TokenStore, TokensError, type NamedTokenRecord } from './tokens';
 import { OtpStore, SessionStore, sessionCookie } from './sessions';
 import { auditRouteParity, parsePrintedRoutes } from './parity';
 import { buildMailAdapter, type MailAdapter } from './mail';
+import { buildAuthorizationUrl, exchangeCode, PkceStore, s256, type OidcSessionInfo } from './oidc';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import {
@@ -258,6 +259,10 @@ const INVITE_DEFAULT_CAP = 100;
 const sessionStoreFile = dataFile.replace(/[^/]*\\.json$/, '') + 'sessions.json';
 const sessionStore = new SessionStore(sessionStoreFile);
 const otpStore = new OtpStore();
+const pkceStore = new PkceStore();
+const oidcIssuerForLogin = process.env.OPENARCH_OIDC_ISSUER ?? authConfig.oidcIssuer;
+const oidcClientId = process.env.OPENARCH_OIDC_CLIENT_ID;
+
 // Wire the mail-backed OTP sink now that both exist (console fallback until configured).
 await refreshMailAdapter();
 const SESSION_IDLE_DAYS = Math.max(1, Number(process.env.OPENARCH_SESSION_IDLE_DAYS) || 30);
@@ -1073,6 +1078,69 @@ app.delete('/api/admin/tokens/:id', async (request, reply) => {
 });
 
 
+
+
+// ── OIDC + PKCE login (spec A5) ──────────────────────────────────────────────
+
+app.get('/api/auth/oidc/start', async (request, reply) => {
+  if (!oidcIssuerForLogin || !oidcClientId) {
+    return reply.code(400).send({ error: 'OIDC login not configured (OPENARCH_OIDC_ISSUER + OPENARCH_OIDC_CLIENT_ID)' });
+  }
+  const redirectUri =
+    process.env.OPENARCH_OIDC_REDIRECT_URI ??
+    `${request.protocol}://${request.hostname}/api/auth/oidc/callback`;
+  const { authorizationUrl, state, codeVerifier } = pkceStore.begin(redirectUri, (stateParam) =>
+    buildAuthorizationUrl({
+      issuer: oidcIssuerForLogin,
+      clientId: oidcClientId,
+      redirectUri,
+      state: stateParam,
+      codeChallenge: s256(codeVerifier),
+    }),
+  );
+  return { authorizationUrl, state, codeVerifier };
+});
+
+app.post('/api/auth/oidc/callback', async (request, reply) => {
+  if (!oidcIssuerForLogin || !oidcClientId) {
+    return reply.code(400).send({ error: 'OIDC login not configured' });
+  }
+  const body = (request.body ?? {}) as { code?: string; state?: string };
+  const code = String(body.code ?? '');
+  const state = String(body.state ?? '');
+  if (!code || !state) return reply.code(400).send({ error: 'code and state are required' });
+  const pair = pkceStore.finish(state);
+  if (!pair) return reply.code(401).send({ error: 'Unknown, expired, or reused state' });
+
+  let accessToken: string;
+  try {
+    const exchanged = await exchangeCode({
+      issuer: oidcIssuerForLogin,
+      clientId: oidcClientId,
+      redirectUri: pair.redirectUri,
+      code,
+      codeVerifier: pair.codeVerifier,
+    });
+    accessToken = exchanged.accessToken;
+  } catch (error) {
+    return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
+  }
+
+  // Same RS256/JWKS verification path as bearer tokens — no second crypto.
+  const verified = resolveActor({ authorization: `Bearer ${accessToken}` });
+  if (!verified?.authenticated) {
+    return reply.code(401).send({ error: 'IdP token failed verification (issuer/audience/expiry)' });
+  }
+  const { token } = sessionStore.mint({
+    subject: verified.subject,
+    displayName: verified.displayName ?? verified.subject,
+    kind: 'oidc',
+    idleDays: SESSION_IDLE_DAYS,
+    absoluteDays: 90,
+  });
+  reply.header('set-cookie', sessionCookie(token));
+  return { token, subject: verified.subject, displayName: verified.displayName };
+});
 
 // ── OTP login + sessions (spec A4) ──────────────────────────────────────────
 

@@ -42,6 +42,8 @@ export const PARITY_SUBJECTS: Record<'admin' | 'owner' | 'editor' | 'viewer' | '
  */
 export const ROUTE_EXPECTATIONS: RouteExpectation[] = [
   { method: 'GET', path: '/health', minRole: 'anonymous', auth: 'public-open' },
+  { method: 'GET', path: '/api/auth/oidc/start', minRole: 'anonymous', auth: 'public-open' },
+  { method: 'POST', path: '/api/auth/oidc/callback', minRole: 'anonymous', auth: 'public-open' },
   { method: 'POST', path: '/api/auth/otp/request', minRole: 'anonymous', auth: 'public-open' },
   { method: 'POST', path: '/api/auth/otp/verify', minRole: 'anonymous', auth: 'public-open' },
   { method: 'POST', path: '/api/auth/logout', minRole: 'authenticated', auth: 'auth-required' },
