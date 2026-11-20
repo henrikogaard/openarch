@@ -15,6 +15,7 @@ import { exportArchi, importArchi } from '@openarch/archi';
 import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
 import { checkRules, exportWorkspaceMarkdown, parseRules } from '@openarch/reporting';
 import { publish } from './publish';
+import { backupData, restoreBackup, verifyStore, type BackupOptions, type RestoreOptions } from './backup';
 // Reuse the single canonical diff implementation (core) — a private CLI
 // duplicate drifted from the server/web semantics.
 
@@ -37,6 +38,10 @@ Commands:
   iac diff <model> <iac-file> [--fail-on drift]  Report IaC drift (CI gate with --fail-on)
   publish-confluence <model> --url URL --space KEY --email E --token T [--title "..."]
                                                  Publish a workspace report to Confluence (cron for scheduled publishing)
+  admin backup [dataDir] [--include-secrets] [--anonymise]  Backup the server data directory (zip + sha256 manifest)
+  admin restore <archive.zip> <dataDir> [--workspace <id>] [--at <seq>] [--dry-run]
+                                                 Restore a backup (verifies checksums; --at lands with Track C)
+  admin verify-store [dataDir]                   Boot-check the store (parse + shape + per-workspace checks)
   doctor                     Print environment and capability information
   --help                     Show this help
 
@@ -448,6 +453,41 @@ async function main(): Promise<number> {
         flags[name] = args[index + 1];
       }
       return publish(args[0], flags);
+    }
+    case 'admin': {
+      const [sub, ...rest] = args;
+      if (sub === 'backup') {
+        const dataDir = rest.find((value) => !value.startsWith('--')) ?? 'data';
+        const options: BackupOptions = {
+          includeSecrets: rest.includes('--include-secrets'),
+          anonymise: rest.includes('--anonymise'),
+        };
+        const { file, manifest } = await backupData(dataDir, options);
+        console.log(`Backup written: ${file} (${manifest.files.length} file(s), secrets=${manifest.secrets}, anonymised=${manifest.anonymised})`);
+        return 0;
+      }
+      if (sub === 'restore') {
+        const [archive, dir = 'data'] = rest.filter((value) => !value.startsWith('--'));
+        if (!archive) throw new Error('Usage: openarch admin restore <archive.zip> <dataDir> [flags]');
+        const options: RestoreOptions = {
+          workspace: rest.find((value) => value.startsWith('--workspace='))?.split('=')[1],
+          at: rest.find((value) => value.startsWith('--at='))?.split('=')[1],
+          dryRun: rest.includes('--dry-run'),
+        };
+        if (rest.includes('--at')) throw new Error('--at requires the event-source store (coming in Track C); the flag surface is stable');
+        const report = await restoreBackup(archive, dir, options);
+        console.log(`Restore ${report.dryRun ? '(dry run) ' : ''}complete: ${report.restoredWorkspaces} workspace(s)`);
+        for (const warning of report.warnings) console.log(`  ${warning}`);
+        return 0;
+      }
+      if (sub === 'verify-store') {
+        const dataDir = rest[0] ?? 'data';
+        const report = await verifyStore(dataDir);
+        console.log(`Verify-store: ${report.workspaceCount} workspace(s), ok=${report.ok}`);
+        for (const warning of report.warnings) console.log(`  ${warning}`);
+        return report.ok ? 0 : 1;
+      }
+      throw new Error(`Unknown admin command "${sub ?? ''}". Use backup, restore, or verify-store.`);
     }
     case 'doctor':
       requireArgs(args, command, 0);
