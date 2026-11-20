@@ -706,3 +706,73 @@ describe('A1: first-boot owner bootstrap token', () => {
     proc.kill('SIGTERM');
   });
 });
+
+describe('A2: named tokens ("People & tokens")', () => {
+  it('admin mints, authenticates, lists (no plaintext), and revokes; members cannot mint', async () => {
+    const created = await json<{ record: { id: string; subject: string }; token: string }>(
+      '/api/admin/tokens',
+      {
+        method: 'POST',
+        headers: { ...admin, 'content-type': 'application/json' },
+        body: JSON.stringify({ subject: 'kari@example.com', displayName: 'Kari' }),
+      },
+    );
+    expect(created.status).toBe(201);
+    const token = created.body.token;
+    expect(token.startsWith('openarch_pat_')).toBe(true);
+
+    // The minted token authenticates and resolves to the named subject.
+    const me = await json<{ subject: string; displayName: string }>('/api/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(me.status).toBe(200);
+    expect(me.body.subject).toBe('kari@example.com');
+    expect(me.body.displayName).toBe('Kari');
+
+    // The list never contains plaintext or full hash material.
+    const list = await json<Array<{ subject: string; prefix4?: string; sha256?: string }>>(
+      '/api/admin/tokens',
+      { headers: admin },
+    );
+    expect(list.status).toBe(200);
+    const ours = list.body.find((record) => record.subject === 'kari@example.com');
+    expect(ours).toBeTruthy();
+    expect(recordHasNoSecrets(ours!)).toBe(false);
+    expect(typeof ours!.prefix4).toBe('string');
+
+    // Non-admin (workspace owner) cannot mint.
+    const forbidden = await json('/api/admin/tokens', {
+      method: 'POST',
+      headers: { ...viewer, 'content-type': 'application/json' },
+      body: JSON.stringify({ subject: 'nope@example.com' }),
+    });
+    expect(forbidden.status).toBe(403);
+
+    // Duplicate subject is 409 (record still exists — before revocation).
+    const dup = await json('/api/admin/tokens', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ subject: 'kari@example.com' }),
+    });
+    expect(dup.status).toBe(409);
+
+    // Revocation makes the token stop working and frees the subject.
+    const revoked = await json(`/api/admin/tokens/${encodeURIComponent(created.body.record.id)}`, {
+      method: 'DELETE',
+      headers: admin,
+    });
+    expect(revoked.status).toBe(204);
+    const after = await fetch(`${base}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(after.status).toBe(401);
+    const reMint = await json('/api/admin/tokens', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ subject: 'kari@example.com' }),
+    });
+    expect(reMint.status).toBe(201);
+  });
+});
+
+function recordHasNoSecrets(record: Record<string, unknown>): boolean {
+  return 'token' in record || 'sha256' in record;
+}

@@ -36,6 +36,7 @@ import {
   roleFor,
   type Actor,
 } from './auth';
+import { TokenStore, TokensError, type NamedTokenRecord } from './tokens';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import {
@@ -197,6 +198,22 @@ function bootstrapOwnerToken(): void {
 if (authConfig.required) {
   bootstrapOwnerToken();
 }
+
+const tokenStoreFile = dataFile.replace(/[^/]*\.json$/, '') + 'tokens.json';
+const tokenStore = new TokenStore(tokenStoreFile);
+
+// Admin predicate: the bootstrap/OPENARCH_ADMIN subject only — token minting
+// is a server-operator capability, not a per-workspace one.
+function requireAdmin(request: { headers: Record<string, unknown> }, reply: import('fastify').FastifyReply): Actor | null {
+  const actor = requireActor(request, reply);
+  if (!actor) return null;
+  if (actor.subject !== authConfig.adminSubject) {
+    void reply.code(403).send({ error: 'Admin only' });
+    return null;
+  }
+  return actor;
+}
+
 
 
 function loadScimUsers(): void {
@@ -403,7 +420,17 @@ function requireActor(
   request: { headers: Record<string, unknown> },
   reply: import('fastify').FastifyReply,
 ): Actor | null {
-  const actor = resolveActor(request.headers);
+  let actor = resolveActor(request.headers);
+  if (!actor) {
+    // Named-token store (spec A2): constant-time hashed resolution.
+    const authorization = request.headers.authorization;
+    if (typeof authorization === 'string' && authorization.toLowerCase().startsWith('bearer ')) {
+      const record = tokenStore.resolve(authorization.slice(7).trim());
+      if (record) {
+        actor = { subject: record.subject, displayName: record.displayName ?? record.subject, authenticated: true };
+      }
+    }
+  }
   if (!actor) {
     void reply.code(401).send({
       error: 'Authentication required',
@@ -834,6 +861,43 @@ app.delete('/api/models/:id/saved-views/:viewId', async (request, reply) => {
   workspace.savedViews = workspace.savedViews.filter((view) => view.id !== viewId);
   audit(workspace, actor.subject, 'delete', `Deleted saved view ${viewId}`);
   persistToDisk();
+  return reply.code(204).send();
+});
+
+
+// ── Named tokens ("People & tokens", A2) — admin only ────────────────────────
+
+app.post('/api/admin/tokens', async (request, reply) => {
+  const actor = requireAdmin(request, reply);
+  if (!actor) return;
+  const body = (request.body ?? {}) as { subject?: string; displayName?: string; expiresAt?: string };
+  try {
+    const { record, token } = tokenStore.mint({
+      subject: String(body.subject ?? ''),
+      displayName: body.displayName,
+      expiresAt: body.expiresAt,
+    });
+    app.log.info(`admin ${actor.subject} minted named token for ${record.subject}`);
+    return reply.code(201).send({ record, token });
+  } catch (error) {
+    if (error instanceof TokensError) {
+      return reply.code(error.statusCode).send({ error: error.message });
+    }
+    return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get('/api/admin/tokens', async (request, reply) => {
+  const actor = requireAdmin(request, reply);
+  if (!actor) return;
+  return tokenStore.list();
+});
+
+app.delete('/api/admin/tokens/:id', async (request, reply) => {
+  const actor = requireAdmin(request, reply);
+  if (!actor) return;
+  const revoked = tokenStore.revoke((request.params as { id: string }).id);
+  if (!revoked) return reply.code(404).send({ error: 'Token not found' });
   return reply.code(204).send();
 });
 
