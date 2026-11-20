@@ -645,3 +645,64 @@ describe('real-time collaboration hub (authenticated websockets)', () => {
     second.socket.close();
   });
 });
+
+describe('A1: first-boot owner bootstrap token', () => {
+  it('prints a one-time owner token on clean volume that authenticates as admin', async () => {
+    // NOTE: the shared server in this suite booted with static tokens, so the
+    // full print-once flow is verified live here via a scratch data dir.
+    const { spawn } = await import('node:child_process');
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'openarch-bootstrap-'));
+    const childEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+    // Deliberately NO OPENARCH_TOKENS / OPENARCH_ADMIN — the whole point is a clean volume.
+    delete childEnv.OPENARCH_TOKENS;
+    delete childEnv.OPENARCH_ADMIN;
+    delete childEnv.OPENARCH_JWT_SECRET;
+    // Outer suite server binds a random 18000–18999 port — stay out of that range.
+    const childPort = 19190;
+    const proc = spawn('npx', ['tsx', 'apps/server/src/index.ts'], {
+      cwd: process.cwd(),
+      env: {
+        ...childEnv,
+        PORT: String(childPort),
+        OPENARCH_DATA: join(dir, 'models.json'),
+        OPENARCH_REQUIRE_AUTH: 'true',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    const base2 = `http://127.0.0.1:${childPort}`;
+    let healthy = false;
+    for (let i = 0; i < 60 && !healthy; i += 1) {
+      try {
+        const response = await fetch(`${base2}/health`);
+        if (response.ok) healthy = true;
+      } catch { /* not yet */ }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    expect(healthy).toBe(true);
+    let match: RegExpExecArray | null = null;
+    for (let i = 0; i < 40 && !match; i += 1) {
+      match = /owner access token:\s*\n?\s*(openarch_admin_[a-f0-9]{48})/.exec(stderr);
+      if (!match) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!match) throw new Error(`bootstrap banner missing; stderr=${stderr.slice(0, 400)}`);
+    expect(match).toBeTruthy();
+    const token = match![1];
+    // The token authenticates as the admin subject.
+    const me = await fetch(`${base2}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(me.status).toBe(200);
+    const meBody = (await me.json()) as { subject: string; roles: Record<string, string>; authenticated: boolean };
+    expect(meBody.authenticated).toBe(true);
+    expect(Object.values(meBody.roles)[0]).toBe('owner');
+    // Only the hash is stored on disk.
+    const { readFileSync } = await import('node:fs');
+    const config = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')) as { auth: { bootstrapTokenHash: string } };
+    expect(config.auth.bootstrapTokenHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(config.auth.bootstrapTokenHash).not.toContain(token);
+    proc.kill('SIGTERM');
+  });
+});

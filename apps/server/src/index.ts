@@ -47,7 +47,7 @@ import {
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -130,6 +130,74 @@ function modelWriteProblem(value: unknown): string | undefined {
 const scimToken = process.env.OPENARCH_SCIM_TOKEN;
 const scimFile = dataFile.replace(/\.json$/, '') + '.users.json';
 const scimUsers = new Map<string, ScimUser>();
+
+// ── Runtime admin config (data/config.json) ──────────────────────────────────
+
+interface RuntimeConfig {
+  version: number;
+  auth: { bootstrapTokenHash?: string; generatedAt?: string };
+  mail?: Record<string, unknown>;
+  invite?: Record<string, unknown>;
+}
+
+const configFile = dataFile.replace(/[^/]*\.json$/, '') + 'config.json';
+
+function readRuntimeConfig(): RuntimeConfig {
+  try {
+    return JSON.parse(readFileSync(configFile, 'utf8')) as RuntimeConfig;
+  } catch {
+    return { version: 1, auth: {} };
+  }
+}
+
+function writeRuntimeConfig(config: RuntimeConfig): void {
+  mkdirSync(dirname(configFile), { recursive: true });
+  const temp = `${configFile}.tmp-${process.pid}`;
+  writeFileSync(temp, `${JSON.stringify(config, null, 2)}\n`);
+  renameSync(temp, configFile);
+}
+
+/**
+ * First-boot owner bootstrap (spec A1): when auth is required and no admin
+ * credential exists (no static tokens, no saved hash), mint a one-time token
+ * printed to stderr exactly once; only its SHA-256 is stored.
+ */
+function bootstrapOwnerToken(): void {
+  const config = readRuntimeConfig();
+  const hasAdmin =
+    authConfig.staticTokens.size > 0 || Boolean(config.auth?.bootstrapTokenHash);
+  if (!hasAdmin) {
+    const token = `openarch_admin_${randomBytes(24).toString('hex')}`;
+    const digest = createHash('sha256').update(token).digest('hex');
+    config.auth = {
+      bootstrapTokenHash: `sha256:${digest}`,
+      generatedAt: new Date().toISOString(),
+    };
+    writeRuntimeConfig(config);
+    // eslint-disable-next-line no-console
+    console.error(
+      [
+        '',
+        'OpenArch: first boot — owner access token:',
+        `  ${token}`,
+        '(Copy it now: it is not shown again and only its hash is stored.)',
+        'Log in with this token, then create named tokens for people (Settings → People & tokens).',
+        '',
+      ].join('\n'),
+    );
+    authConfig.bootstrapTokenHash = `sha256:${digest}`;
+  } else {
+    // Restore a previously generated hash into the live auth config.
+    if (config.auth?.bootstrapTokenHash) {
+      authConfig.bootstrapTokenHash = config.auth.bootstrapTokenHash;
+    }
+  }
+}
+
+if (authConfig.required) {
+  bootstrapOwnerToken();
+}
+
 
 function loadScimUsers(): void {
   if (!existsSync(scimFile)) return;

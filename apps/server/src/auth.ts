@@ -1,4 +1,4 @@
-import { createHmac, createPublicKey, timingSafeEqual, verify, type KeyObject } from 'node:crypto';
+import { createHash, createHmac, createPublicKey, timingSafeEqual, verify, type KeyObject } from 'node:crypto';
 import type { WorkspaceMember, WorkspaceRole } from '@openarch/core';
 
 export interface Actor {
@@ -25,6 +25,8 @@ export interface AuthConfig {
   oidcAudience?: string;
   /** Optional explicit JWKS URL; otherwise discovered from the issuer. */
   oidcJwksUrl?: string;
+  /** SHA-256 of the first-boot owner token (data/config.json auth.bootstrapTokenHash). */
+  bootstrapTokenHash?: string;
 }
 
 export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
@@ -47,6 +49,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     // Bootstrap: when static tokens are configured, the first one owns seeded workspaces.
     adminSubject: env.OPENARCH_ADMIN ?? [...staticTokens.values()][0]?.subject ?? 'system',
     oidcIssuer: env.OPENARCH_OIDC_ISSUER,
+    bootstrapTokenHash: env.OPENARCH_BOOTSTRAP_TOKEN_HASH || undefined,
     oidcAudience: env.OPENARCH_OIDC_AUDIENCE,
     oidcJwksUrl: env.OPENARCH_OIDC_JWKS_URL,
   };
@@ -182,6 +185,15 @@ export function resolveActor(
     const staticEntry = config.staticTokens.get(token);
     if (staticEntry) {
       return { subject: staticEntry.subject, displayName: staticEntry.displayName, authenticated: true };
+    }
+    if (config.bootstrapTokenHash) {
+      const digest = createHash('sha256').update(token).digest('hex');
+      const expected = config.bootstrapTokenHash.replace(/^sha256:/, '');
+      const a = Buffer.from(digest);
+      const b = Buffer.from(expected);
+      if (a.length === b.length && timingSafeEqual(a, b)) {
+        return { subject: config.adminSubject, displayName: 'Owner (bootstrap)', authenticated: true };
+      }
     }
     if (config.jwtSecret) {
       const payload = verifyJwt(token, config.jwtSecret);
