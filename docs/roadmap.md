@@ -455,7 +455,7 @@ proving it, and the diagram survives a round-trip looking the way the user left 
 | **Domains become a second metamodel** | Domains are a property + registry, not element types. |
 | **AOEF compatibility vs rich metadata** | Rich metadata in native JSON; only AOEF-safe properties cross the boundary. |
 | **Scope creep into CMDB/ITSM** | Integrate read-only; never replace ServiceNow. |
-| **Real-time collaboration** | Not planned. Async collaboration + optimistic locking + baselines covers the target teams. |
+| **Real-time collaboration** | Tier-2 ships the validated op log (ADR 0004); a CRDT needs a validation-first ADR (reject/repair path, snapshot compatibility, undo story). Structural conflicts fall back to the three-way review. |
 | **Performance on large models** | Domain filtering, view scoping, and virtualised lists; measure at 2,000+ elements. |
 
 ---

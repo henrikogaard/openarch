@@ -405,6 +405,91 @@ add a store, inherit the safety net.
 | 8 | Mail: adapter + validated setup screen + email invites + magic-link accept + hashed token issuance (no-IdP) + `INVITE_RETENTION_DAYS` | M | integration: round-trip gate, single-use/lockout, retention deletion, audit chain; Mailpit compose |
 | 9 | Public-BYO hardening: CORS guidance for user servers, on-site privacy statement, static-bundle no-storage audit | S | CI lint: bundle contains no fetch/POST to the public origin's host |
 
-Decisions needed before step 8: Resend-first-then-SMTP vs both day one (recommend: adapter
-interface + Resend first, SMTP as a follow-up PR), and the from-address policy per deployment.
+Decisions needed before step 8: **Resolved 2026-11-20 — both Resend and SMTP ship on day
+one** (one `MailAdapter` interface, two drivers, both tested through Mailpit for SMTP and a
+mocked API for Resend), and **the from-address is set during configuration**, not only by env:
+the admin setup screen persists it to the server's runtime config store (§9.7), with
+`OPENARCH_*` env vars acting only as bootstrap defaults/overrides on first boot.
+
+---
+
+## 10. Tier-2 data storage — the concrete layout (answers "how is data stored on tier 2?")
+
+Two storage eras, one migration.
+
+### 10.1 Today (shipped): whole-model file store
+
+```
+$OPENARCH_DATA                                           (default: data/models.json)
+  └── one JSON file = every workspace:
+      [ { model: Model, version, updatedAt, updatedBy, orgId?, groupRoles?,
+          members: [{subject, role}], comments: [], audit: [],
+          snapshots: []  (capped 50, structuredClone on each save),
+          savedViews: [] } ]
+```
+
+- Atomic writes (`tmp`+rename), corrupt-file quarantine, backups via `Export all`. This is
+  what a Docker volume, Keycloak compose, encryption-at-rest (planned §2.1), and all 30+
+  integration tests operate on today.
+
+### 10.2 The multi-user target (with mail + concurrent editing): event-sourced store
+
+Per ADR 0004, the collaboration engine is the validated op log, and **the log is the
+persistence**:
+
+```
+data/
+  config.json                    # runtime admin config (mail provider, from-address, …)
+  workspaces/<workspaceId>/
+    meta.json                    # { version, createdAt, updatedAt, orgId?, members,
+                                 #   groupRoles, retention… }
+    events/                      # the canonical history, append-only
+      000001.jsonl               # one op per line, numbered shards (~1 MB each)
+    snapshots/                   # periodic materialisations (every N ops + on compaction)
+      000000.model.json          # full validated Model at event n
+    tombstones.json              # ops explicitly reversed + why (conflict fallback log)
+  users.json                     # SCIM records (unchanged)
+```
+
+- **Op** `{ seq, actor, at, kind, path, before?, after? }` — kinds cover
+  `element.*`, `relationship.*`, `view.*`, `property.*`, `domain.*`, `artefact.*`,
+  `member.*`, `approve/reject/waive`, `comment`. Small, idempotent, replayable.
+- **Write path**: op → server projects the result → `validateModel` (invariant 6, unchanged)
+  → if invalid, **reject with reasons** (the client sees exactly which rule) → if valid,
+  append + bump `version` + broadcast. No op enters the log unvalidated; convergence becomes
+  *authorized* before it becomes *automatic*.
+- **Read path**: boot = latest snapshot + replay remaining events (fast: snapshots happen
+  every ~200 ops and on server shutdown); clients receive op broadcasts live — editing is
+  genuinely co-current, and full-model `PUT`s stop being the only write path.
+- **Why the file-per-$OPENARCH_DATA model graduates to this**: one artifact — the event log —
+  now serves as audit trail (`actor` on every op), version history (replay to any `seq`),
+  per-op attribution, and merge record; four reconciled stores become one.
+- **Snapshots stay real**: they're what backup, AOEF export, tiers 1/3, and restore fall back
+  to; the log is compacted against them so the folder never grows quadratically.
+- **Retention**: `snapshots` rolling cap (configurable, default 50) and event shards compacted
+  when their events are all superseded and snapshotted; tombstones kept for governance
+  traceability.
+- **Migration**: boots were automatic — an existing `models.json` becomes snapshot 0 + a
+  synthetic `snapshot_import` op per workspace; no user-facing step; `Export all` continues
+  to emit exactly the snapshot document it does today.
+
+### 10.3 What separates tier 2 from tiers 1/3 — why they never need the log
+
+Tiers 1 and 3 stay **whole-model JSON** (folder/IndexedDB) with `updatedAt` stamps and the
+drift → three-way review path (§9.5). Only the shared-server tier speaks events. A workspace
+can move between tiers freely: a tier-2 workspace exported (snapshot) becomes tier-1 files —
+and tier-1 files opened on a server become `snapshot_import` events. **One format on the
+ground, ops only where more than one human writes.**
+
+### 10.4 Mail + runtime config storage (decision summary)
+
+- One `MailAdapter` with two first-class drivers — `resend` (API, provider call) and `smtp`
+  (nodemailer, pointed at Mailpit for dev/CI) — both shipped day one.
+- `data/config.json` holds the *runtime* admin configuration: provider, from-domain,
+  from-address, per-deployment reply-to, retention, outstanding-invite caps. Env vars
+  (`OPENARCH_RESEND_API_KEY`, `SMTP_*`) remain the bootstrap values (first boot copies them
+  in; the admin screen's edits persist there); the setup screen re-validates the current
+  value with a delivery round-trip before invite-by-email is enabled — which includes the
+  from-address, since Resend requires domain verification to match it.
+
 
