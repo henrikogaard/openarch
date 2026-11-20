@@ -4,8 +4,12 @@ import { classifyRepositoryError, OfflineError, ReauthError, withErrorClass } fr
 describe('session error classification (3/7)', () => {
   it('routes 401/session/auth failures to reauth', () => {
     expect(classifyRepositoryError(new Error('Server request failed: 401'))).toBe('reauth');
+    expect(classifyRepositoryError(new Error('Authentication required'))).toBe('reauth');
     expect(classifyRepositoryError(new Error('Your session expired'))).toBe('reauth');
-    expect(classifyRepositoryError(new Error('Forbidden: you are not a member'))).toBe('reauth');
+  });
+
+  it('membership 403 is NOT reauth (re-login cannot fix permissions)', () => {
+    expect(classifyRepositoryError(new Error('Forbidden: you are not a member'))).toBe('other');
   });
 
   it('routes network/timeout failures to offline', () => {

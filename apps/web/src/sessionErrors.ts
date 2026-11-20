@@ -22,7 +22,11 @@ export class OfflineError extends Error {
 export function classifyRepositoryError(error: unknown): 'reauth' | 'offline' | 'other' {
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
-  if (/\b401\b|unauthor|session expired|forbidden: you are not a member/.test(lower)) {
+  // Sessions/middleware throw "Authentication required" or bare "401"; only
+  // auth-expiry maps here — membership 403s are a permissions problem that
+  // re-login cannot fix, so they classify as 'other' (surfaced as conflict
+  // or save-failure instead of a misleading re-login prompt).
+  if (/\b401\b|unauthorized|authentication required|session expired/.test(lower)) {
     return 'reauth';
   }
   if (/\boffline\b|network|fetch failed|failed to fetch|timeout|econnrefused|unreachable/.test(lower)) {

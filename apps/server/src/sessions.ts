@@ -163,7 +163,7 @@ export class OtpStore {
       return false;
     }
     row.requestsPerHour.push(now);
-    const code = String(100_000 + Math.floor(Math.random() * 900_000));
+    const code = String(100_000 + (randomBytes(4).readUInt32BE(0) % 900_000));
     row.codeHash = createHash('sha256').update(code).digest('hex');
     row.expiresAt = now + OTP_TTL_MS;
     row.attempts = 0;

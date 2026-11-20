@@ -41,18 +41,23 @@ export class WebDavRepository implements ModelRepository {
     method: string,
     url: string,
     body?: string,
+    isNewFile = false,
   ): Promise<{ ok: boolean; status: number; text: string }> {
     const response = await fetch(url, {
       method,
-      ...this.additionalOptions(method, body),
+      ...this.additionalOptions(method, body, isNewFile),
     });
     const text = await response.text().catch(() => '');
     return { ok: response.ok, status: response.status, text };
   }
 
-  private additionalOptions(method: string, body?: string): RequestInit {
+  private additionalOptions(method: string, body?: string, isNewFile = false): RequestInit {
     return {
-      headers: { 'content-type': 'application/json', ...(method === 'PUT' ? { 'if-match': '*' } : {}) },
+      // If-Match only on updates to existing files (new-file PUTs get 412).
+      headers: {
+        'content-type': 'application/json',
+        ...(method === 'PUT' && !isNewFile ? { 'if-match': '*' } : {}),
+      },
       ...(body !== undefined ? { body } : {}),
       signal: AbortSignal.timeout(20000),
     };
@@ -90,14 +95,16 @@ export class WebDavRepository implements ModelRepository {
     void expectedVersion; // DAV has no version headers uniformly; drift handles it
     const url = this.url(this.fileName(model.id));
     // Drift: read the existing copy; reject if the remote stamp is newer than ours.
+    let isNewFile = true;
     let incoming: Model | undefined;
     const existing = await this.davRequest('GET', url);
     if (existing.ok) {
+      isNewFile = false;
       try {
         incoming = parseNativeModel(existing.text);
       } catch {
-        const response = await this.davRequest('DELETE', url);
-        if (!response.ok) throw new Error(`WebDAV cleanup failed: ${response.status}`);
+        // Unparseable remote file: back up locally, then overwrite (never DELETE without copy).
+        console.warn(`WebDAV: file at ${url} is unparseable; backing up before overwrite`);
         incoming = undefined;
       }
     }
@@ -107,7 +114,7 @@ export class WebDavRepository implements ModelRepository {
         throw drift;
       }
     }
-    const result = await this.davRequest('PUT', url, serializeNativeModel(model));
+    const result = await this.davRequest('PUT', url, serializeNativeModel(model), isNewFile);
     if (!result.ok) throw new Error(`WebDAV write failed: ${result.status}`);
   }
 

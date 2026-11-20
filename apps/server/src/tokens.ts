@@ -79,7 +79,7 @@ export class TokenStore {
       displayName: input.displayName?.trim() || subject,
       createdAt: new Date().toISOString(),
       expiresAt: input.expiresAt,
-      prefix4: token.slice(0, 12).slice(-4),
+      prefix4: token.slice(-4),
       sha256,
     };
     this.records.push(record);

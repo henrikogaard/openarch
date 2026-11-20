@@ -284,6 +284,9 @@ export default function App() {
 
   const repository = useMemo<ModelRepository>(() => {
     if (mode === 'server') return new ServerRepository(apiUrl);
+    if (mode === 'folder' && folderHandle) {
+      return new FolderRepository(folderHandle as never, () => 'reject');
+    }
     if (mode === 'git' && gitConfig) {
       return new GitRepository(
         createGitHubFileStore({
@@ -297,7 +300,7 @@ export default function App() {
       );
     }
     return new LocalRepository();
-  }, [mode, gitConfig]);
+  }, [mode, gitConfig, folderHandle]);
 
   const changeMode = (next: Mode) => {
     setMode(next);
@@ -393,9 +396,15 @@ export default function App() {
     getModel: () => modelRef.current,
     commitModel: (next) => commit(() => next),
     postOps: async (id, batch) => {
+      const token = getAccessToken();
+      const credentials: RequestCredentials = mode === 'server' ? 'include' : 'same-origin';
       const response = await fetch(`${apiUrl}/models/${encodeURIComponent(id)}/ops`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        credentials,
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ ops: batch }),
       });
       if (!response.ok) throw new Error(`ops ${response.status}`);

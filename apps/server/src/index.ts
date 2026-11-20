@@ -259,7 +259,7 @@ function hashInvite(code: string): string {
 const INVITE_FAILED_ATTEMPT_CAP = 10;
 const INVITE_DEFAULT_CAP = 100;
 
-const sessionStoreFile = dataFile.replace(/[^/]*\\.json$/, '') + 'sessions.json';
+const sessionStoreFile = dataFile.replace(/[^/]*\.json$/, '') + 'sessions.json';
 const sessionStore = new SessionStore(sessionStoreFile);
 const otpStore = new OtpStore();
 const pkceStore = new PkceStore();
@@ -777,8 +777,9 @@ app.put('/api/models/:id', async (request, reply) => {
   );
   persistToDisk();
   // C2 compat: the whole-model save decomposes into ops so the event log is
-  // complete from day one (spec §5 C2); a rejection here means the log is
-  // paused, never divergent — the workspace model above is already validated.
+  // complete from day one. Ops validate against the PRE-SAVE model (the state
+  // each op was derived from) and chain — never against the already-
+  // overwritten workspace.model, which would starve creates/deletes.
   try {
     const store = eventStores.get(id) ?? (() => {
       const fresh = new WorkspaceEventStore(eventStoreRoot(dataFile), id);
@@ -787,10 +788,14 @@ app.put('/api/models/:id', async (request, reply) => {
       return fresh;
     })();
     const compatOps = buildOpsFromDiff(preSaveModel, model);
+    // Chain each op: append validates against (and advances) `logModel`,
+    // separately from the already-committed `workspace.model`.
+    let logModel = preSaveModel;
     for (const op of compatOps) {
-      const appended = store.append(workspace.model, op, actor.subject);
+      const appended = store.append(logModel, op, actor.subject);
       if (appended.result.ok) {
-        broadcastEvent(id, { type: 'ops', workspaceId: id, ops: [op] });
+        logModel = appended.model;
+        broadcastEvent(id, { type: 'ops', workspaceId: id, by: actor.subject, ops: [op] });
       }
     }
   } catch (error) {
@@ -1200,38 +1205,65 @@ app.get('/api/auth/oidc/start', async (request, reply) => {
       codeChallenge: s256(codeVerifier),
     }),
   );
-  return { authorizationUrl, state, codeVerifier };
+  // PKCE: the code_verifier never leaves this server (state→verifier map is
+  // authoritative); the client gets only the URL and state.
+  return { authorizationUrl, state };
+});
+
+// OIDC callback: IdPs redirect with GET (browser), but API clients may POST.
+app.get('/api/auth/oidc/callback', async (request, reply) => {
+  const query = request.query as { code?: string; state?: string };
+  await handleOidcCallback(query.code, query.state, (result) => {
+    // On success: set the cookie and redirect to the app root so the
+    // browser lands with a usable session rather than a JSON body.
+    if ('token' in result) {
+      reply.header('set-cookie', sessionCookie(result.token as string));
+      return reply.redirect('/');
+    }
+    const statusCode = (result as { statusCode?: number }).statusCode ?? 401;
+    return reply.code(statusCode).send(result);
+  });
 });
 
 app.post('/api/auth/oidc/callback', async (request, reply) => {
-  if (!oidcIssuerForLogin || !oidcClientId) {
-    return reply.code(400).send({ error: 'OIDC login not configured' });
-  }
   const body = (request.body ?? {}) as { code?: string; state?: string };
-  const code = String(body.code ?? '');
-  const state = String(body.state ?? '');
-  if (!code || !state) return reply.code(400).send({ error: 'code and state are required' });
+  const result = await handleOidcCallback(body.code, body.state, (r) => r) as Record<string, unknown>;
+  if ('error' in result) {
+    const statusCode = typeof result.statusCode === 'number' ? result.statusCode : 401;
+    return reply.code(statusCode).send(result);
+  }
+  const tokenResult = result as { token: string; subject: string; displayName?: string };
+  reply.header('set-cookie', sessionCookie(tokenResult.token));
+  return tokenResult;
+});
+
+async function handleOidcCallback(
+  code: string | undefined,
+  state: string | undefined,
+  done: (result: Record<string, unknown>) => unknown,
+): Promise<unknown> {
+  if (!code || !state) return done({ statusCode: 400, error: 'code and state are required' });
   const pair = pkceStore.finish(state);
-  if (!pair) return reply.code(401).send({ error: 'Unknown, expired, or reused state' });
+  if (!pair) return done({ statusCode: 401, error: 'Unknown, expired, or reused state' });
 
   let accessToken: string;
   try {
     const exchanged = await exchangeCode({
-      issuer: oidcIssuerForLogin,
-      clientId: oidcClientId,
+      issuer: oidcIssuerForLogin!,
+      clientId: oidcClientId!,
       redirectUri: pair.redirectUri,
       code,
       codeVerifier: pair.codeVerifier,
     });
     accessToken = exchanged.accessToken;
   } catch (error) {
-    return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
+    return done({ statusCode: 502, error: error instanceof Error ? error.message : String(error) });
   }
 
-  // Same RS256/JWKS verification path as bearer tokens — no second crypto.
+  // Same RS256/JWKS path as bearer tokens — no second crypto.
   const verified = resolveActor({ authorization: `Bearer ${accessToken}` });
   if (!verified?.authenticated) {
-    return reply.code(401).send({ error: 'IdP token failed verification (issuer/audience/expiry)' });
+    return done({ statusCode: 401, error: 'IdP token failed verification (issuer/audience/expiry)' });
   }
   const { token } = sessionStore.mint({
     subject: verified.subject,
@@ -1240,9 +1272,8 @@ app.post('/api/auth/oidc/callback', async (request, reply) => {
     idleDays: SESSION_IDLE_DAYS,
     absoluteDays: 90,
   });
-  reply.header('set-cookie', sessionCookie(token));
-  return { token, subject: verified.subject, displayName: verified.displayName };
-});
+  return done({ token, subject: verified.subject, displayName: verified.displayName });
+}
 
 // ── OTP login + sessions (spec A4) ──────────────────────────────────────────
 
@@ -1350,6 +1381,27 @@ app.post('/api/models/:id/restore-at/:seq', async (request, reply) => {
   workspace.version += 1;
   workspace.updatedAt = new Date().toISOString();
   workspace.updatedBy = actor.subject;
+  // C4: append a reversal op to the event log so restore is a logged
+  // event, not a history rewrite — replay from here reproduces the restore.
+  try {
+    const reversalOp = {
+      kind: 'model.meta.update' as const,
+      ref: (request.params as { id: string }).id,
+      after: {
+        restoredFromSeq: targetSeq,
+        note: `Restored point-in-time seq ${targetSeq} as revision ${workspace.version}`,
+      },
+    };
+    const rev = store.append(workspace.model, reversalOp, actor.subject);
+    if (rev.result.ok) {
+      // The event log's replayed model now matches the live model again.
+      void rev.model;
+    } else {
+      app.log.warn(`reversal op failed for ${(request.params as { id: string }).id}: ${rev.result.issues?.[0]?.message ?? 'unknown'}`);
+    }
+  } catch (error) {
+    app.log.warn(`reversal append error for ${(request.params as { id: string }).id}: ${error instanceof Error ? error.message : String(error)}`);
+  }
   audit(workspace, actor.subject, 'restore', `Restored point-in-time seq ${targetSeq} as revision ${workspace.version}`);
   persistToDisk();
   broadcastEvent((request.params as { id: string }).id, {
