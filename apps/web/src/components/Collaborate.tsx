@@ -9,6 +9,7 @@ import {
   type Waiver,
 } from '@openarch/core';
 import { type ServerRepository } from '@openarch/repository';
+import SnapshotDiffPanel from './SnapshotDiffPanel';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from '../i18n';
 
@@ -40,6 +41,7 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [visualDiff, setVisualDiff] = useState<{ snapshot: Model } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!repository) return;
@@ -92,6 +94,19 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
   const createSnapshot = async () => {
     await repository.createSnapshot(modelId, `Snapshot ${new Date().toLocaleString()}`);
     await refresh();
+  };
+
+  const openVisualDiff = async (snapshot: SnapshotMeta) => {
+    setBusy(snapshot.id);
+    try {
+      const snapshotModel = await repository.getSnapshot(modelId, snapshot.id);
+      const incoming = structuredClone(snapshotModel);
+      setVisualDiff({ snapshot: incoming });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy('');
+    }
   };
 
   const showDiff = async (snapshot: SnapshotMeta) => {
@@ -209,6 +224,13 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
                 <button className="small-button" disabled={busy === snapshot.id} onClick={() => void showDiff(snapshot)}>
                   {snapshotDiffs[snapshot.id] ? t('hideDiff') : t('diffVsCurrent')}
                 </button>
+                <button
+                  className="small-button"
+                  disabled={busy === snapshot.id}
+                  onClick={() => void openVisualDiff(snapshot)}
+                >
+                  Visual
+                </button>
                 <button className="small-button" disabled={busy === snapshot.id} onClick={() => void restore(snapshot)}>
                   {t('restore')}
                 </button>
@@ -324,6 +346,13 @@ export default function Collaborate({ modelId, model, repository, onRestore }: C
           </ul>
         </section>
       </div>
+      {visualDiff && (
+        <SnapshotDiffPanel
+          model={model}
+          snapshotModel={visualDiff.snapshot}
+          onClose={() => setVisualDiff(null)}
+        />
+      )}
     </div>
   );
 }

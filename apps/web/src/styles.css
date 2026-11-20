@@ -2459,3 +2459,45 @@ table.matrix td.filled {
   color: #b42318;
   border-color: #f59e0b;
 }
+
+.snapshot-diff {
+  width: min(1080px, 96vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  margin: 5vh auto 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px #00000033;
+}
+.snapshot-diff-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.snapshot-diff-columns figure {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.snapshot-diff-columns figcaption {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.snapshot-diff-svg {
+  height: 320px;
+  overflow: auto;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.snapshot-diff-svg svg {
+  max-width: 100%;
+  height: auto;
+}
