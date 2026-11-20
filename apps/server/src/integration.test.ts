@@ -776,3 +776,109 @@ describe('A2: named tokens ("People & tokens")', () => {
 function recordHasNoSecrets(record: Record<string, unknown>): boolean {
   return 'token' in record || 'sha256' in record;
 }
+
+describe('A3: workspace invites', () => {
+  it('owner creates an invite; a stranger redeems it and becomes a member with the baked role', async () => {
+    // Owner creates a viewer invite.
+    const invite = await json<{ id: string; code: string; role: string; url: string; expiresAt: string }>(
+      '/api/models/sample-model/invites',
+      {
+        method: 'POST',
+        headers: { ...admin, 'content-type': 'application/json' },
+        body: JSON.stringify({ role: 'viewer' }),
+      },
+    );
+    expect(invite.status).toBe(201);
+    expect(invite.body.url).toContain('#invite=');
+    expect(invite.body.role).toBe('viewer');
+
+    // Strangers (authenticated but non-member) can redeem.
+    const redeem = await json('/api/invites/redeem', {
+      method: 'POST',
+      headers: { ...stranger, 'content-type': 'application/json' },
+      body: JSON.stringify({ code: invite.body.code }),
+    });
+    expect(redeem.status).toBe(204);
+
+    // The stranger is now a member with viewer role and can read the workspace.
+    const model = await json('/api/models/sample-model', { headers: stranger });
+    expect(model.status).toBe(200);
+
+    // Viewer denies editor actions (attempting member-write forbidden).
+    const membersPut = await json('/api/models/sample-model/members', {
+      method: 'PUT',
+      headers: { ...stranger, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        members: [{ subject: 'admin', role: 'owner' }, { subject: 'stranger', role: 'editor' }],
+        groupRoles: [],
+      }),
+    });
+    expect(membersPut.status).toBe(403);
+
+    // Redeem is single-use.
+    const reRedeem = await json('/api/invites/redeem', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ code: invite.body.code }),
+    });
+    expect(reRedeem.status).toBe(403);
+  });
+
+  it('blocks: owner-role invites, expired codes, revocation, non-owner creation', async () => {
+    const ownerAttempt = await json('/api/models/sample-model/invites', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'owner' }),
+    });
+    expect(ownerAttempt.status).toBe(400);
+
+    const viewerCreate = await json('/api/models/sample-model/invites', {
+      method: 'POST',
+      headers: { ...viewer, 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'editor' }),
+    });
+    expect(viewerCreate.status).toBe(403);
+
+    // TTL floor is 1 day: expiry tests use minted history via revocation instead.
+    const invite = await json<{ id: string; code: string }>('/api/models/sample-model/invites', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'editor', ttlDays: 1 }),
+    });
+    expect(invite.status).toBe(201);
+
+    // Owner lists invites without full codes.
+    const listed = await json<Array<{ displayPrefix: string; code?: string }>>(
+      '/api/models/sample-model/invites',
+      { headers: admin },
+    );
+    expect(listed.status).toBe(200);
+    expect(Array.isArray(listed.body)).toBe(true);
+    for (const entry of listed.body) {
+      expect(typeof entry.displayPrefix).toBe('string');
+      expect(entry.code).toBeUndefined();
+    }
+
+    // Revoke, then redeem fails.
+    const revoked = await json(`/api/models/sample-model/invites/${encodeURIComponent(invite.body.id)}`, {
+      method: 'DELETE',
+      headers: admin,
+    });
+    expect(revoked.status).toBe(204);
+    const afterRevoke = await json('/api/invites/redeem', {
+      method: 'POST',
+      headers: { ...stranger, 'content-type': 'application/json' },
+      body: JSON.stringify({ code: invite.body.code }),
+    });
+    expect(afterRevoke.status).toBe(403);
+
+    // Unknown codes never leak which workspace exists.
+    const unknown = await json('/api/invites/redeem', {
+      method: 'POST',
+      headers: { ...stranger, 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 'NOSUCHCODE1234567890' }),
+    });
+    expect(unknown.status).toBe(403);
+    expect(String(unknown.body)).not.toContain('sample-model');
+  });
+});

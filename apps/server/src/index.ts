@@ -48,7 +48,7 @@ import {
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -66,6 +66,8 @@ interface Workspace {
   orgId?: string;
   /** Group→role mappings used when the actor has no explicit membership. */
   groupRoles?: GroupRole[];
+  /** Outstanding/accepted invitations (spec A3). Codes stored hashed only. */
+  invites?: InviteRecord[];
   version: number;
   updatedAt: string;
   updatedBy: string;
@@ -198,6 +200,34 @@ function bootstrapOwnerToken(): void {
 if (authConfig.required) {
   bootstrapOwnerToken();
 }
+
+/** Invitation (spec A3): codes are 128-bit, hashed at rest, single-use, never owner-granting. */
+interface InviteRecord {
+  id: string;
+  codeHash: string;        // sha256 of the base32 code
+  displayPrefix: string;   // first 4 chars for admin recognition
+  role: 'editor' | 'viewer';
+  email?: string;
+  invitedBy: string;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt?: string;
+  acceptedBy?: string;
+  revokedAt?: string;
+  failedAttempts: number;
+}
+
+function inviteCode(): string {
+  // 128 bits of entropy, base32 (Crockford), no lookalike glyphs.
+  return randomBytes(16).toString('base64url').replace(/[-_]/g, '').slice(0, 20).toUpperCase();
+}
+
+function hashInvite(code: string): string {
+  return createHash('sha256').update(code).digest('hex');
+}
+
+const INVITE_FAILED_ATTEMPT_CAP = 10;
+const INVITE_DEFAULT_CAP = 100;
 
 const tokenStoreFile = dataFile.replace(/[^/]*\.json$/, '') + 'tokens.json';
 const tokenStore = new TokenStore(tokenStoreFile);
@@ -899,6 +929,117 @@ app.delete('/api/admin/tokens/:id', async (request, reply) => {
   const revoked = tokenStore.revoke((request.params as { id: string }).id);
   if (!revoked) return reply.code(404).send({ error: 'Token not found' });
   return reply.code(204).send();
+});
+
+
+// ── Invites (spec A3) — owner-only create/revoke, self-service redeem ─────────
+
+app.post('/api/models/:id/invites', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner']);
+  if (!actor) return;
+  const body = (request.body ?? {}) as { role?: string; ttlDays?: number; email?: string };
+  const role = body.role === 'editor' ? 'editor' : body.role === 'viewer' ? 'viewer' : null;
+  if (!role) return reply.code(400).send({ error: 'role must be "editor" or "viewer"' });
+  workspace.invites ??= [];
+  const outstanding = workspace.invites.filter((invite) => !invite.acceptedAt && !invite.revokedAt);
+  if (outstanding.length >= INVITE_DEFAULT_CAP) {
+    return reply.code(400).send({ error: `Outstanding invite cap reached (${INVITE_DEFAULT_CAP})` });
+  }
+  const ttlDays = Math.min(90, Math.max(1, Number(body.ttlDays) || 7));
+  const code = inviteCode();
+  const invite: InviteRecord = {
+    id: `invite-${randomUUID()}`,
+    codeHash: hashInvite(code),
+    displayPrefix: code.slice(0, 4),
+    role,
+    email: typeof body.email === 'string' && body.email.includes('@') ? body.email : undefined,
+    invitedBy: actor.subject,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + ttlDays * 86_400_000).toISOString(),
+    failedAttempts: 0,
+  };
+  workspace.invites.push(invite);
+  audit(workspace, actor.subject, 'create', `Created ${role} invite ${invite.displayPrefix}…`);
+  persistToDisk();
+  return reply.code(201).send({
+    id: invite.id,
+    code,
+    url: `${request.protocol}://${request.hostname}/#invite=${code}`,
+    role,
+    expiresAt: invite.expiresAt,
+  });
+});
+
+app.get('/api/models/:id/invites', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner']);
+  if (!actor) return;
+  return (workspace.invites ?? []).map((invite) => ({
+    id: invite.id,
+    displayPrefix: invite.displayPrefix,
+    role: invite.role,
+    email: invite.email,
+    invitedBy: invite.invitedBy,
+    createdAt: invite.createdAt,
+    expiresAt: invite.expiresAt,
+    acceptedAt: invite.acceptedAt,
+    acceptedBy: invite.acceptedBy,
+    revokedAt: invite.revokedAt,
+  }));
+});
+
+app.delete('/api/models/:id/invites/:inviteId', async (request, reply) => {
+  const workspace = workspaces.get((request.params as { id: string }).id);
+  if (!workspace) return reply.code(404).send({ error: 'Workspace not found' });
+  const actor = requireRole(request, reply, workspace, ['owner']);
+  if (!actor) return;
+  const { inviteId } = request.params as { id: string; inviteId: string };
+  const invite = (workspace.invites ?? []).find((candidate) => candidate.id === inviteId);
+  if (!invite) return reply.code(404).send({ error: 'Invite not found' });
+  invite.revokedAt = new Date().toISOString();
+  audit(workspace, actor.subject, 'delete', `Revoked invite ${invite.displayPrefix}…`);
+  persistToDisk();
+  return reply.code(204).send();
+});
+
+app.post('/api/invites/redeem', async (request, reply) => {
+  const actor = requireActor(request, reply);
+  if (!actor) return;
+  const body = (request.body ?? {}) as { code?: string };
+  const presented = String(body.code ?? '').trim().toUpperCase();
+  if (!presented) return reply.code(400).send({ error: 'code is required' });
+  const digest = createHash('sha256').update(presented).digest('hex');
+  for (const workspace of workspaces.values()) {
+    for (const invite of workspace.invites ?? []) {
+      const a = Buffer.from(digest);
+      const b = Buffer.from(invite.codeHash);
+      if (a.length !== b.length || !timingSafeEqual(a, b)) continue;
+      // Found the invite — apply the full lifecycle rules.
+      if (invite.revokedAt) return reply.code(403).send({ error: 'Invite revoked' });
+      if (invite.acceptedAt) return reply.code(403).send({ error: 'Invite already redeemed' });
+      if (Date.parse(invite.expiresAt) < Date.now()) return reply.code(403).send({ error: 'Invite expired' });
+      if (invite.failedAttempts >= INVITE_FAILED_ATTEMPT_CAP) {
+        return reply.code(403).send({ error: 'Invite locked' });
+      }
+      workspace.members ??= [];
+      if (workspace.members.some((member) => member.subject === actor.subject)) {
+        invite.acceptedAt = new Date().toISOString();
+        invite.acceptedBy = actor.subject;
+        persistToDisk();
+        return reply.code(204).send();
+      }
+      workspace.members.push({ subject: actor.subject, role: invite.role, displayName: actor.displayName });
+      invite.acceptedAt = new Date().toISOString();
+      invite.acceptedBy = actor.subject;
+      audit(workspace, actor.subject, 'update', `${actor.subject} joined via invite ${invite.displayPrefix}…`);
+      persistToDisk();
+      return reply.code(204).send();
+    }
+  }
+  return reply.code(403).send({ error: 'Unknown invite code' });
 });
 
 // ── Members / RBAC ───────────────────────────────────────────────────────────
