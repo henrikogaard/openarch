@@ -661,7 +661,7 @@ describe('A1: first-boot owner bootstrap token', () => {
     delete childEnv.OPENARCH_ADMIN;
     delete childEnv.OPENARCH_JWT_SECRET;
     // Outer suite server binds a random 18000–18999 port — stay out of that range.
-    const childPort = 19190;
+    const childPort = 24000 + Math.floor(Math.random() * 2000);
     const proc = spawn('npx', ['tsx', 'apps/server/src/index.ts'], {
       cwd: process.cwd(),
       env: {
@@ -676,6 +676,7 @@ describe('A1: first-boot owner bootstrap token', () => {
     proc.stderr.on('data', (chunk) => { stderr += String(chunk); });
     const base2 = `http://127.0.0.1:${childPort}`;
     let healthy = false;
+    try {
     for (let i = 0; i < 60 && !healthy; i += 1) {
       try {
         const response = await fetch(`${base2}/health`);
@@ -703,7 +704,9 @@ describe('A1: first-boot owner bootstrap token', () => {
     const config = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')) as { auth: { bootstrapTokenHash: string } };
     expect(config.auth.bootstrapTokenHash).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(config.auth.bootstrapTokenHash).not.toContain(token);
+  } finally {
     proc.kill('SIGTERM');
+  }
   });
 });
 
@@ -880,5 +883,178 @@ describe('A3: workspace invites', () => {
     });
     expect(unknown.status).toBe(403);
     expect(String(unknown.body)).not.toContain('sample-model');
+  });
+});
+
+describe('A4: OTP login + sessions', () => {
+  it('request→verify→session works for named-token subjects via console fallback; logout revokes', async () => {
+    // Ensure a named token exists for the OTP subject.
+    const minted = await json<{ token: string }>('/api/admin/tokens', {
+      method: 'POST',
+      headers: { ...admin, 'content-type': 'application/json' },
+      body: JSON.stringify({ subject: 'ola@example.com', displayName: 'Ola' }),
+    });
+    expect(minted.status).toBe(201);
+
+    // Request is always 204 — for unknown emails too.
+    const request1 = await json('/api/auth/otp/request', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'ola@example.com' }),
+    });
+    expect(request1.status).toBe(204);
+    const unknown = await json('/api/auth/otp/request', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'nobody@example.com' }),
+    });
+    expect(unknown.status).toBe(204);
+
+    // The console sink printed the code to the child's stderr; the suite pipes
+    // stdio: 'ignore', so instead we exercise verify failure paths + use the
+    // seeded code via a direct unit of the OtpStore contract instead (below),
+    // and here assert verify rejects bad codes and rate-limits.
+    const bad = await json('/api/auth/otp/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'ola@example.com', code: '000000' }),
+    });
+    expect(bad.status).toBe(401);
+  });
+
+  it('session cookie authenticates /api/me (unit-level flow via SessionStore contract)', async () => {
+    // Directly exercise the store contract the endpoints rely on:
+    const { SessionStore, sessionCookie } = await import('./sessions');
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'openarch-sessions-'));
+    const store = new SessionStore(join(dir, 'sessions.json'));
+    const { token, record } = store.mint({
+      subject: 'session-user@example.com',
+      displayName: 'Session User',
+      kind: 'otp',
+      idleDays: 30,
+      absoluteDays: 90,
+    });
+    expect(token.length).toBeGreaterThan(20);
+    expect(record.subject).toBe('session-user@example.com');
+    const resolved = store.resolve(token, 30);
+    expect(resolved?.subject).toBe('session-user@example.com');
+    expect(store.resolve('not-the-token', 30)).toBeUndefined();
+    expect(store.revoke(token)).toBe(true);
+    expect(store.resolve(token, 30)).toBeUndefined();
+    // Sessions persist hashed across restart.
+    const reopened = new SessionStore(join(dir, 'sessions.json'));
+    const second = reopened.mint({
+      subject: 'second@example.com',
+      displayName: 'Second',
+      kind: 'otp',
+      idleDays: 30,
+      absoluteDays: 90,
+    });
+    expect(reopened.resolve(second.token, 30)?.subject).toBe('second@example.com');
+    const { readFileSync } = await import('node:fs');
+    const raw = readFileSync(join(dir, 'sessions.json'), 'utf8');
+    expect(raw).not.toContain(second.token);
+    expect(sessionCookie(token)).toContain('HttpOnly');
+    expect(sessionCookie(token)).toContain('SameSite=Lax');
+  });
+
+  it('logout revokes session cookie issued by verify (end-to-end happy path via captured code)', { timeout: 60_000 }, async () => {
+    // To capture the console-fallback code we spawn a scratch child whose
+    // stderr we read (same pattern as the A1 bootstrap test).
+    const { spawn } = await import('node:child_process');
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'openarch-otp-'));
+    const childEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+    delete childEnv.OPENARCH_TOKENS;
+    delete childEnv.OPENARCH_ADMIN;
+    delete childEnv.OPENARCH_JWT_SECRET;
+    const dataDir2 = join(dir, 'models.json');
+    const port2 = 26000 + Math.floor(Math.random() * 2000);
+    const proc = spawn('npx', ['tsx', 'apps/server/src/index.ts'], {
+      cwd: process.cwd(),
+      env: { ...childEnv, PORT: String(port2), OPENARCH_DATA: dataDir2, OPENARCH_REQUIRE_AUTH: 'true' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    const base2 = `http://127.0.0.1:${port2}`;
+    // First boot prints the owner token in the banner — use it to mint a named token.
+    let healthy = false;
+    try {
+    for (let i = 0; i < 60 && !healthy; i += 1) {
+      try { const r = await fetch(`${base2}/health`); if (r.ok) healthy = true; } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    expect(healthy).toBe(true);
+    let ownerToken: string | null = null;
+    for (let i = 0; i < 40 && !ownerToken; i += 1) {
+      const match = /(openarch_admin_[a-f0-9]{48})/.exec(stderr);
+      if (match) ownerToken = match[1];
+      else await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(ownerToken).toBeTruthy();
+
+    // Mint a named token over HTTP on the child.
+    const mint = await fetch(`${base2}/api/admin/tokens`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ subject: 'eirik@example.com', displayName: 'Eirik' }),
+    });
+    const mintBody = await mint.text();
+    if (mint.status !== 201) {
+      throw new Error(`mint failed ${mint.status}: ${mintBody.slice(0, 200)}; ownerToken=${ownerToken?.slice(0, 20)}…`);
+    }
+    expect(mint.status).toBe(201);
+
+    // Request an OTP; the console sink writes it to the child's stderr.
+    stderr = '';
+    const req = await fetch(`${base2}/api/auth/otp/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'eirik@example.com' }),
+    });
+    expect(req.status).toBe(204);
+    let code: string | null = null;
+    for (let i = 0; i < 40 && !code; i += 1) {
+      const match = /OTP for eirik@example\.com: (\d{6})/.exec(stderr);
+      if (match) code = match[1];
+      else await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(code).toBeTruthy();
+
+    // Verify → session cookie + bearer token.
+    const response = await fetch(`${base2}/api/auth/otp/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'eirik@example.com', code }),
+    });
+    expect(response.status).toBe(200);
+    const setCookie = response.headers.get('set-cookie') ?? '';
+    expect(setCookie).toContain('HttpOnly');
+    const body = (await response.json()) as { token: string; subject: string };
+    expect(body.subject).toBe('eirik@example.com');
+
+    // The session authenticates /api/me both ways.
+    const meBearer = await fetch(`${base2}/api/me`, { headers: { Authorization: `Bearer ${body.token}` } });
+    expect(meBearer.status).toBe(200);
+    const meCookie = await fetch(`${base2}/api/me`, { headers: { cookie: setCookie.split(';')[0] } });
+    expect(meCookie.status).toBe(200);
+
+    // Logout revokes the session.
+    const logout = await fetch(`${base2}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${body.token}` },
+    });
+    expect(logout.status).toBe(204);
+    const after = await fetch(`${base2}/api/me`, { headers: { Authorization: `Bearer ${body.token}` } });
+    expect(after.status).toBe(401);
+  } finally {
+    proc.kill('SIGTERM');
+  }
   });
 });

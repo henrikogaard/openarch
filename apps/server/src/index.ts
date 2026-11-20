@@ -37,6 +37,7 @@ import {
   type Actor,
 } from './auth';
 import { TokenStore, TokensError, type NamedTokenRecord } from './tokens';
+import { OtpStore, SessionStore, sessionCookie } from './sessions';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import {
@@ -228,6 +229,11 @@ function hashInvite(code: string): string {
 
 const INVITE_FAILED_ATTEMPT_CAP = 10;
 const INVITE_DEFAULT_CAP = 100;
+
+const sessionStoreFile = dataFile.replace(/[^/]*\\.json$/, '') + 'sessions.json';
+const sessionStore = new SessionStore(sessionStoreFile);
+const otpStore = new OtpStore();
+const SESSION_IDLE_DAYS = Math.max(1, Number(process.env.OPENARCH_SESSION_IDLE_DAYS) || 30);
 
 const tokenStoreFile = dataFile.replace(/[^/]*\.json$/, '') + 'tokens.json';
 const tokenStore = new TokenStore(tokenStoreFile);
@@ -451,6 +457,21 @@ function requireActor(
   reply: import('fastify').FastifyReply,
 ): Actor | null {
   let actor = resolveActor(request.headers);
+  if (!actor) {
+    // Session store (spec A4): cookie or Bearer, hashed, idle+absolute expiry.
+    const cookieToken = /openarch_session=([^;]+)/.exec(String(request.headers.cookie ?? ''))?.[1];
+    const bearer = typeof request.headers.authorization === 'string'
+      && request.headers.authorization.toLowerCase().startsWith('bearer ')
+      ? request.headers.authorization.slice(7).trim()
+      : undefined;
+    const sessionToken = cookieToken ?? bearer;
+    if (sessionToken) {
+      const session = sessionStore.resolve(sessionToken, SESSION_IDLE_DAYS);
+      if (session) {
+        actor = { subject: session.subject, displayName: session.displayName, authenticated: true };
+      }
+    }
+  }
   if (!actor) {
     // Named-token store (spec A2): constant-time hashed resolution.
     const authorization = request.headers.authorization;
@@ -931,6 +952,69 @@ app.delete('/api/admin/tokens/:id', async (request, reply) => {
   return reply.code(204).send();
 });
 
+
+
+// ── OTP login + sessions (spec A4) ──────────────────────────────────────────
+
+app.post('/api/auth/otp/request', async (request, reply) => {
+  const body = (request.body ?? {}) as { email?: string };
+  const email = String(body.email ?? '').trim().toLowerCase();
+  // Generic 204 always: unknown emails never confirm existence.
+  const known = tokenStore.list().some((record) => record.subject.toLowerCase() === email)
+    || (authConfig.staticTokens.size > 0 && false);
+  if (email && known) {
+    otpStore.request(email); // rate-limited internally; still 204 either way
+  }
+  return reply.code(204).send();
+});
+
+app.post('/api/auth/otp/verify', async (request, reply) => {
+  const body = (request.body ?? {}) as { email?: string; code?: string };
+  const email = String(body.email ?? '').trim().toLowerCase();
+  const ip = request.ip;
+  const withinIpBudget = otpStore.verifyFailureForIp(ip);
+  const ok = withinIpBudget && otpStore.verify(email, String(body.code ?? ''));
+  if (!ok) {
+    if (!withinIpBudget) return reply.code(429).send({ error: 'Too many attempts' });
+    return reply.code(401).send({ error: 'Invalid or expired code' });
+  }
+  // Resolve display name from the named-token record.
+  const tokenRecord = tokenStore.list().find((record) => record.subject.toLowerCase() === email);
+  const displayName = tokenRecord?.displayName ?? email;
+  const { token } = sessionStore.mint({
+    subject: email,
+    displayName,
+    kind: 'otp',
+    idleDays: SESSION_IDLE_DAYS,
+    absoluteDays: 90,
+  });
+  reply.header('set-cookie', sessionCookie(token));
+  return { token, subject: email, displayName };
+});
+
+// CSRF guard for cookie-session unsafe methods (spec A4): same-origin check.
+app.addHook('preHandler', async (request, reply) => {
+  const method = request.method.toUpperCase();
+  if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return;
+  const cookie = request.headers.cookie ?? '';
+  if (!cookie.includes('openarch_session=')) return; // Bearer-only clients exempt
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+  if (typeof origin === 'string' && typeof host === 'string' && new URL(origin).host !== host) {
+    return reply.code(403).send({ error: 'Cross-origin request rejected' });
+  }
+});
+
+app.post('/api/auth/logout', async (request, reply) => {
+  const bearer = request.headers.authorization?.startsWith('Bearer ')
+    ? request.headers.authorization.slice(7).trim()
+    : undefined;
+  const cookieToken = /openarch_session=([^;]+)/.exec(String(request.headers.cookie ?? ''))?.[1];
+  const token = bearer ?? cookieToken;
+  if (token) sessionStore.revoke(token);
+  reply.header('set-cookie', 'openarch_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0');
+  return reply.code(204).send();
+});
 
 // ── Invites (spec A3) — owner-only create/revoke, self-service redeem ─────────
 
