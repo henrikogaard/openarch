@@ -1200,7 +1200,7 @@ describe('D2/D3: invite-by-email gate and delivery', () => {
     expect(stillGated.status).toBe(400);
 
     // A code-only invite (no email) is unaffected by the gate (out-of-band link).
-    const outOfBand = await json('/api/models/sample-model/invites', {
+    const outOfBand = await json<{ id: string; url: string }>('/api/models/sample-model/invites', {
       method: 'POST',
       headers: { ...admin, 'content-type': 'application/json' },
       body: JSON.stringify({ role: 'viewer' }),
@@ -1209,7 +1209,7 @@ describe('D2/D3: invite-by-email gate and delivery', () => {
     expect(outOfBand.body.url).toContain('#invite=');
 
     // Cleanup: revoke the created invite to keep the workspace tidy.
-    await json(`/api/models/sample-model/invites/${encodeURIComponent(outOfBand.body.id)}`, {
+    await json(`/api/models/sample-model/invites/${encodeURIComponent(outOfBand.body!.id)}`, {
       method: 'DELETE',
       headers: admin,
     });
