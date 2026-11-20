@@ -415,6 +415,19 @@ the admin setup screen persists it to the server's runtime config store (§9.7),
 
 ## 10. Tier-2 data storage — the concrete layout (answers "how is data stored on tier 2?")
 
+**Centralization clarification (2026-11-20, answers "tier 2 must have centralized data"):**
+tier 2 is **100% server-authoritative and centralized** — every workspace, comment, audit entry,
+member list and snapshot lives *on the server's volume/scale-out storage*, exactly like any
+classic multi-user web app. Nothing canonical is stored per-user: no browser holds team data.
+The browser in tier-2 mode holds only two *non-canonical* artifacts: the access token
+(sessionStorage, per tab) and the crash-recovery journal (IndexedDB, a mirror of the last
+unsaved seconds that is *cleared on every successful save* — it exists so a died tab recovers
+work, and it can never outrank or diverge from the server because the server holds the
+canonical copy). In storage terms: the browser is a cache of reads plus a 15-second write
+buffer at most. "JSON files" in this section means **files on the server** (the deployment's
+volume, snapshot-able, backup-able as in §12) — it never means files scattered on user
+machines like tier 1/3.
+
 Two storage eras, one migration.
 
 ### 10.1 Today (shipped): whole-model file store
