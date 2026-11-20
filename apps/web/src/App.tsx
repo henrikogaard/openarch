@@ -75,6 +75,9 @@ import Catalog from './components/Catalog';
 import Collaborate from './components/Collaborate';
 import ConflictReview from './components/ConflictReview';
 import CommandPalette, { type CommandItem } from './components/CommandPalette';
+import EmailSetup from './components/EmailSetup';
+import Invites from './components/Invites';
+import PeopleTokens from './components/PeopleTokens';
 import Dashboard from './components/Dashboard';
 import DeploymentView from './components/DeploymentView';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -1947,6 +1950,92 @@ export default function App() {
                   />
                 </Suspense>
               ) : tab === 'settings' ? (
+                <>
+                {mode === 'server' && (
+                  <>
+                    <EmailSetup
+                      api={{
+                        get: async () => {
+                          const response = await fetch(`${apiUrl}/admin/mail`, { headers: { authorization: `Bearer ${getAccessToken() ?? ''}` } });
+                          if (!response.ok) throw new Error(`mail ${response.status}`);
+                          return (await response.json()) as never;
+                        },
+                        put: async (config) => {
+                          const response = await fetch(`${apiUrl}/admin/mail`, {
+                            method: 'PUT',
+                            headers: { 'content-type': 'application/json', authorization: `Bearer ${getAccessToken() ?? ''}` },
+                            body: JSON.stringify(config),
+                          });
+                          if (!response.ok) throw new Error(`mail ${response.status}`);
+                          return undefined;
+                        },
+                        test: async (to) => {
+                          const response = await fetch(`${apiUrl}/admin/mail/test`, {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json', authorization: `Bearer ${getAccessToken() ?? ''}` },
+                            body: JSON.stringify({ to }),
+                          });
+                          if (!response.ok) throw new Error((await response.json() as { error: string }).error);
+                          return (await response.json()) as never;
+                        },
+                      }}
+                    />
+                    <PeopleTokens
+                      api={{
+                        list: async () => {
+                          const response = await fetch(`${apiUrl}/admin/tokens`, { headers: { authorization: `Bearer ${getAccessToken() ?? ''}` } });
+                          if (!response.ok) throw new Error(`tokens ${response.status}`);
+                          return (await response.json()) as never;
+                        },
+                        mint: async (input) => {
+                          const response = await fetch(`${apiUrl}/admin/tokens`, {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json', authorization: `Bearer ${getAccessToken() ?? ''}` },
+                            body: JSON.stringify(input),
+                          });
+                          if (!response.ok) throw new Error(`mint ${response.status}`);
+                          return (await response.json()) as never;
+                        },
+                        revoke: async (id) => {
+                          const response = await fetch(`${apiUrl}/admin/tokens/${encodeURIComponent(id)}`, {
+                            method: 'DELETE',
+                            headers: { authorization: `Bearer ${getAccessToken() ?? ''}` },
+                          });
+                          if (!response.ok) throw new Error(`revoke ${response.status}`);
+                        },
+                      }}
+                    />
+                    <Invites
+                      workspaceId={model.id}
+                      api={{
+                        list: async (workspaceId) => {
+                          const response = await fetch(`${apiUrl}/models/${encodeURIComponent(workspaceId)}/invites`, { headers: { authorization: `Bearer ${getAccessToken() ?? ''}` } });
+                          if (!response.ok) throw new Error(`invites ${response.status}`);
+                          return (await response.json()) as never;
+                        },
+                        create: async (workspaceId, input) => {
+                          const response = await fetch(`${apiUrl}/models/${encodeURIComponent(workspaceId)}/invites`, {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json', authorization: `Bearer ${getAccessToken() ?? ''}` },
+                            body: JSON.stringify(input),
+                          });
+                          if (!response.ok) {
+                            const body = (await response.json()) as { error: string };
+                            throw new Error(body.error);
+                          }
+                          return (await response.json()) as never;
+                        },
+                        revoke: async (workspaceId, inviteId) => {
+                          const response = await fetch(`${apiUrl}/models/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(inviteId)}`, {
+                            method: 'DELETE',
+                            headers: { authorization: `Bearer ${getAccessToken() ?? ''}` },
+                          });
+                          if (!response.ok) throw new Error(`revoke ${response.status}`);
+                        },
+                      }}
+                    />
+                  </>
+                )}
                 <WorkspaceSettings
                   model={model}
                   connectors={connectors}
@@ -1976,7 +2065,9 @@ export default function App() {
                   onArchive={() => archiveWorkspace(model.id)}
                   onDelete={() => deleteWorkspace(model.id)}
                 />
-              ) : (
+              
+                </>
+) : (
                 <Collaborate
                   modelId={model.id}
                   model={model}
