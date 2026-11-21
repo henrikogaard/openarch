@@ -1,14 +1,37 @@
+# OpenArch self-hosted stack.
+#
+#   docker compose up                # OpenArch on http://localhost:8080
+#   docker compose --profile keycloak up   # + Keycloak for live OIDC testing
+#
+# Data persists in the named volume `openarch-data`.
 services:
   openarch:
     build: .
     ports:
-      - '8080:8080'
+      - "8080:8080"
     environment:
-      PORT: 8080
-      OPENARCH_DATA: /data/models.json
+      OPENARCH_DATA: /app/data/models.json
+      OPENARCH_CORS_ORIGIN: "" # default allows local loopback; set your origin in production
+      # Auth (recommended for anything reachable beyond localhost):
+      # OPENARCH_REQUIRE_AUTH: "true"
+      # OPENARCH_TOKENS: '{"my-token":{"subject":"me@example.com","displayName":"Me"}}'
+      # OPENARCH_ADMIN: "me@example.com"
     volumes:
-      - openarch-data:/data
-    restart: unless-stopped
+      - openarch-data:/app/data
+    # With the keycloak profile: point OpenArch at the IdP
+    #   OPENARCH_REQUIRE_AUTH: "true"
+    #   OPENARCH_OIDC_ISSUER: http://localhost:8180/realms/openarch
+    #   OPENARCH_OIDC_AUDIENCE: openarch
+    #   OPENARCH_ADMIN: "admin"
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    profiles: ["keycloak"]
+    command: ["start-dev", "--http-port=8180"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8180:8180"
 
 volumes:
   openarch-data:

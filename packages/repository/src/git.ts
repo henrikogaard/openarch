@@ -33,8 +33,15 @@ export class GitRepository implements ModelRepository {
   async getModel(id: string): Promise<Model | undefined> {
     try {
       return parseNativeModel(await this.store.read(this.path(id)));
-    } catch {
-      return undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Only genuine absence maps to "no such model" — auth, rate limits, and
+      // network errors must surface, or callers "recover" by creating over
+      // the real file.
+      if (/GitHub (list|read) failed: 404/.test(message) || /No such file/.test(message) || message.includes('no content')) {
+        return undefined;
+      }
+      throw error;
     }
   }
 
@@ -66,23 +73,46 @@ export function createGitHubFileStore(options: {
     'X-GitHub-Api-Version': '2022-11-28',
   };
   const fullPath = (path: string) => (root ? `${root}/${path}` : path);
+  const timeout = () => AbortSignal.timeout(20000);
+  const encodedBranch = encodeURIComponent(branch);
 
   async function readSha(path: string): Promise<string | undefined> {
-    const response = await fetch(`${base}/${encodeURI(fullPath(path))}?ref=${branch}`, { headers });
-    if (!response.ok) return undefined;
+    const response = await fetch(`${base}/${encodeURI(fullPath(path))}?ref=${encodedBranch}`, {
+      headers,
+      signal: timeout(),
+    });
+    // Only a genuine "file does not exist" means absent; rate limits and
+    // server errors must surface, or a sha-less PUT turns them into opaque
+    // GitHub 422s downstream.
+    if (response.status === 404) return undefined;
+    if (!response.ok) throw new Error(`GitHub read failed: ${response.status}`);
     const data = (await response.json()) as { sha?: string };
     return data.sha;
   }
 
   return {
     async list() {
-      const response = await fetch(`${base}/${root ? `${root}?ref=${branch}` : `?ref=${branch}`}`, { headers });
+      const response = await fetch(`${base}/${root ? `${root}?ref=` : `?ref=`}${encodedBranch}`, {
+        headers,
+        signal: timeout(),
+      });
+      // GitHub's Contents API caps directory listings at 1,000 entries and
+      // Errors with a 403 hinting at the git trees API beyond that — surface
+      // it loudly instead of a silent partial list.
+      if (response.status === 403) {
+        throw new Error(
+          'GitHub list failed: 403 (directory may exceed 1000 files — split workspaces across subfolders)',
+        );
+      }
       if (!response.ok) throw new Error(`GitHub list failed: ${response.status}`);
       const entries = (await response.json()) as Array<{ name: string; type: string }>;
       return entries.filter((entry) => entry.type === 'file').map((entry) => `${root ? `${root}/` : ''}${entry.name}`);
     },
     async read(path) {
-      const response = await fetch(`${base}/${encodeURI(fullPath(path))}?ref=${branch}`, { headers });
+      const response = await fetch(`${base}/${encodeURI(fullPath(path))}?ref=${encodedBranch}`, {
+        headers,
+        signal: timeout(),
+      });
       if (!response.ok) throw new Error(`GitHub read failed: ${response.status}`);
       const data = (await response.json()) as { content?: string };
       if (!data.content) throw new Error('GitHub file has no content');
@@ -102,6 +132,7 @@ export function createGitHubFileStore(options: {
         method: 'PUT',
         headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        signal: timeout(),
       });
       if (!response.ok) throw new Error(`GitHub write failed: ${response.status}`);
     },
@@ -112,6 +143,7 @@ export function createGitHubFileStore(options: {
         method: 'DELETE',
         headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify({ message, sha, branch }),
+        signal: timeout(),
       });
       if (!response.ok) throw new Error(`GitHub delete failed: ${response.status}`);
     },

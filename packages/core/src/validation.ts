@@ -1,5 +1,5 @@
-import { getElementType, getRelationshipType, isAllowedRelationship } from './metamodel';
-import type { Model } from './types';
+import { getElementType, getRelationshipType, isAllowedRelationship, metamodelVersions } from './metamodel';
+import type { Model, Waiver } from './types';
 import { primaryText } from './types';
 
 export interface ValidationIssue {
@@ -11,8 +11,19 @@ export interface ValidationIssue {
 }
 
 export interface ValidationOptions {
-  /** Elevate notation/style findings to errors. */
+  /** Strict mode: elevate element-level warnings (naming/type findings) to errors. */
   strict?: boolean;
+}
+
+/** Drop issues excused by waivers (rule match, optionally scoped to one entity). */
+export function applyWaivers(issues: ValidationIssue[], waivers: Waiver[] = []): ValidationIssue[] {
+  if (!waivers.length) return issues;
+  return issues.filter(
+    (issue) =>
+      !waivers.some(
+        (waiver) => waiver.rule === issue.rule && (!waiver.entityId || waiver.entityId === issue.entityId),
+      ),
+  );
 }
 
 /** Structural checks that run identically in the browser, server, and CLI. */
@@ -22,6 +33,15 @@ export function validateModel(model: Model, options: ValidationOptions = {}): Va
 
   if (!primaryText(model.name)) {
     issues.push({ severity: 'warning', rule: 'model.name', message: 'Model has no name' });
+  }
+
+  if (model.metamodelVersion && !metamodelVersions().includes(model.metamodelVersion)) {
+    issues.push({
+      severity: 'warning',
+      rule: 'model.metamodel-version',
+      message: `Model targets metamodel version "${model.metamodelVersion}", which is not registered (available: ${metamodelVersions().join(', ')})`,
+      suggestion: 'Register the metamodel version or set the model back to 3.2.',
+    });
   }
 
   for (const element of model.elements) {
@@ -109,13 +129,38 @@ export function validateModel(model: Model, options: ValidationOptions = {}): Va
         message: 'A view has no name',
       });
     }
+    const nodeIds = new Set(view.nodes.map((node) => node.id));
     for (const node of view.nodes) {
+      if (!node.id?.trim()) {
+        issues.push({
+          severity: 'error',
+          rule: 'view.empty-node-id',
+          message: 'A view node has an empty identifier',
+        });
+        continue;
+      }
       if (node.elementRef && !elements.has(node.elementRef)) {
         issues.push({
           severity: 'error',
           rule: 'view.dangling-element-ref',
           entityId: node.id,
           message: `View node ${node.id} references missing element ${node.elementRef}`,
+        });
+      }
+      if (node.parentId && !nodeIds.has(node.parentId)) {
+        issues.push({
+          severity: 'error',
+          rule: 'view.dangling-parent',
+          entityId: node.id,
+          message: `View node ${node.id} has a parent ${node.parentId} that is not in the same view`,
+        });
+      }
+      if (node.groupingElementId && !elements.has(node.groupingElementId)) {
+        issues.push({
+          severity: 'error',
+          rule: 'view.dangling-group-ref',
+          entityId: node.id,
+          message: `View container ${node.id} references missing grouping element ${node.groupingElementId}`,
         });
       }
       if (!node.elementRef && primaryText(node.label).length === 0) {
@@ -128,6 +173,14 @@ export function validateModel(model: Model, options: ValidationOptions = {}): Va
       }
     }
     for (const edge of view.edges) {
+      if (!edge.id?.trim()) {
+        issues.push({
+          severity: 'error',
+          rule: 'view.empty-edge-id',
+          message: 'A view edge has an empty identifier',
+        });
+        continue;
+      }
       if (!relationshipIds.has(edge.relationshipRef)) {
         issues.push({
           severity: 'error',
@@ -135,6 +188,39 @@ export function validateModel(model: Model, options: ValidationOptions = {}): Va
           entityId: edge.id,
           message: `View edge ${edge.id} references missing relationship ${edge.relationshipRef}`,
         });
+      }
+      if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+        issues.push({
+          severity: 'error',
+          rule: 'view.dangling-edge-endpoint',
+          entityId: edge.id,
+          message: `View edge ${edge.id} connects nodes that are not in this view`,
+        });
+        continue;
+      }
+      // Views must depict the canonical relationship faithfully: an edge
+      // whose endpoints show different elements than the relationship is
+      // lying about the model.
+      const relationship = model.relationships.find((candidate) => candidate.id === edge.relationshipRef);
+      if (relationship) {
+        const sourceNode = view.nodes.find((node) => node.id === edge.source);
+        const targetNode = view.nodes.find((node) => node.id === edge.target);
+        if (sourceNode?.elementRef && sourceNode.elementRef !== relationship.source) {
+          issues.push({
+            severity: 'error',
+            rule: 'view.edge-mismatched-source',
+            entityId: edge.id,
+            message: `View edge ${edge.id} shows ${sourceNode.elementRef} as source but the relationship starts at ${relationship.source}`,
+          });
+        }
+        if (targetNode?.elementRef && targetNode.elementRef !== relationship.target) {
+          issues.push({
+            severity: 'error',
+            rule: 'view.edge-mismatched-target',
+            entityId: edge.id,
+            message: `View edge ${edge.id} shows ${targetNode.elementRef} as target but the relationship ends at ${relationship.target}`,
+          });
+        }
       }
     }
   }

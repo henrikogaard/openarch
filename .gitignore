@@ -69,6 +69,13 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
+# Agent worktrees
+.claude/worktrees/
+
+# Docs site output
+site-dist/
+tmp-pack/
+
 # Archives
 *.zip
 *.tar.gz

@@ -1,17 +1,35 @@
 import {
+  addEdgeBendpoint,
+  alignNodes,
   allowedRelationships,
+  assignElements,
   buildConfiguredView,
   createFromTemplate,
   createModel,
   createSampleModel,
+  WORKSPACE_TEMPLATES,
   diffModels,
+  diffSummary,
+  distributeNodes,
+  duplicateElements,
+  elementRefsForNodes,
   filterModelByDomain,
   getElementType,
+  groupNodes,
   LAYER_LABELS,
+  mergeModels,
   LAYER_ORDER,
   parseAoef,
   primaryText,
+  reconnectRelationship,
+  relationshipRefsForEdges,
+  removeElements,
+  removeRelationships,
   serializeAoef,
+  setEdgeBendpoints,
+  setNodeZOrder,
+  ungroupNodes,
+  validateModel,
   type ArchiElement,
   type Artefact,
   type Bounds,
@@ -19,11 +37,17 @@ import {
   type Model,
   type ModelDiff,
   type ModelSummary,
+  type NodeAlignment,
+  type Point,
   type RelationshipTypeDefinition,
   type View,
 } from '@openarch/core';
 import {
+  createGitHubFileStore,
+  FolderRepository,
+  GitRepository,
   LocalRepository,
+  NATIVE_SCHEMA_VERSION,
   parseNativeModel,
   readShareHash,
   serializeNativeModel,
@@ -38,36 +62,73 @@ import {
   exportViewSvg,
 } from '@openarch/exporters';
 import { exportArchi, importArchi } from '@openarch/archi';
-import { exportWorkspaceMarkdown } from '@openarch/reporting';
+import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
+import { publishToConfluence, type ConnectorConfig } from '@openarch/connectors';
+// Heavy office/report exporters are loaded on demand so the entry bundle
+// stays small (they pull pptxgenjs and docx — nearly a megabyte of JS).
+type ReportingModule = typeof import('@openarch/reporting');
+const loadReporting = (): Promise<ReportingModule> => import('@openarch/reporting');
 import { LanguageContext, type Language, useTranslation } from './i18n';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import AiPanel from './components/AiPanel';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Artefacts from './components/Artefacts';
 import Canvas from './components/Canvas';
 import Catalog from './components/Catalog';
 import Collaborate from './components/Collaborate';
+import ConflictReview from './components/ConflictReview';
+import CommandPalette, { type CommandItem } from './components/CommandPalette';
+import EmailSetup from './components/EmailSetup';
+import Invites from './components/Invites';
+import PeopleTokens from './components/PeopleTokens';
 import Dashboard from './components/Dashboard';
 import DeploymentView from './components/DeploymentView';
+import ErrorBoundary from './components/ErrorBoundary';
+import GitConfigDialog, { type GitConfig } from './components/GitConfigDialog';
+import { ICON_PACKS } from './iconPacks';
+import { journalClear, journalRead, journalWrite } from './journal';
+import { useOps } from './useOps';
+import { parseAoefAsync, parseNativeAsync } from './workerParse';
+import { OfflineError, ReauthError, withErrorClass } from './sessionErrors';
+import { getAccessToken, setAccessToken, useCollab } from './useCollab';
 import DomainMap from './components/DomainMap';
 import EamViews from './components/EamViews';
-import Enrichment from './components/Enrichment';
 import ImportPreview from './components/ImportPreview';
 import Inspector from './components/Inspector';
 import InterfaceCatalog from './components/InterfaceCatalog';
 import MatrixView from './components/MatrixView';
+import OnboardingWizard from './components/OnboardingWizard';
 import Portfolio from './components/Portfolio';
 import SavedViews, { type SavedView } from './components/SavedViews';
+import ShortcutHelp from './components/ShortcutHelp';
+import UndoTimeline from './components/UndoTimeline';
+import type { UndoEntry } from './components/UndoTimeline';
 import Sidebar from './components/Sidebar';
 import TraceView from './components/TraceView';
+import ValueStreams from './components/ValueStreams';
+import { MigrationTimelinePanel, TraceabilityPanel } from './components/AnalysisPanels';
 import ValidationPanel from './components/ValidationPanel';
 import ViewDesigner from './components/ViewDesigner';
 import WorkspaceHome, { type CreateWorkspaceInput } from './components/WorkspaceHome';
 import WorkspaceSettings from './components/WorkspaceSettings';
 
+// Heavy tabs load on demand (AI, enrichment/IaC) to keep the initial bundle small.
+const AiPanel = lazy(() => import('./components/AiPanel'));
+const Enrichment = lazy(() => import('./components/Enrichment'));
+
 type Route = 'home' | 'workspace' | 'portfolio';
 type Tab = 'editor' | 'catalog' | 'analysis' | 'views' | 'enrichment' | 'artefacts' | 'collaborate' | 'ai' | 'settings';
-type AnalysisTab = 'dashboard' | 'eam' | 'validation' | 'trace' | 'matrices' | 'deployment' | 'interfaces' | 'domains';
-type Mode = 'local' | 'server';
+type AnalysisTab =
+  | 'dashboard'
+  | 'eam'
+  | 'validation'
+  | 'trace'
+  | 'matrices'
+  | 'deployment'
+  | 'interfaces'
+  | 'domains'
+  | 'streams'
+  | 'traceability'
+  | 'timeline';
+type Mode = 'local' | 'server' | 'git' | 'folder';
 
 interface MagicConnection {
   sourceNodeId: string;
@@ -95,6 +156,14 @@ function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'model';
 }
 
+/** Union two id-keyed arrays; the incoming entries replace same-id ones. */
+function upstreamById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+  if (!incoming.length) return existing;
+  const byId = new Map(existing.map((item) => [item.id, item]));
+  for (const item of incoming) byId.set(item.id, item);
+  return [...byId.values()];
+}
+
 function downloadFile(name: string, content: string | Blob, type: string): void {
   const blob = typeof content === 'string' ? new Blob([content], { type }) : content;
   const url = URL.createObjectURL(blob);
@@ -102,7 +171,8 @@ function downloadFile(name: string, content: string | Blob, type: string): void 
   anchor.href = url;
   anchor.download = name;
   anchor.click();
-  URL.revokeObjectURL(url);
+  // Revoking synchronously can cancel in-flight downloads in some engines.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function hasShareHash(): boolean {
@@ -135,30 +205,239 @@ export default function App() {
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [showSavedViews, setShowSavedViews] = useState(false);
   const [modelVersion, setModelVersion] = useState<number | undefined>(undefined);
-  const modelRef = useRef<Model | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [snapToGrid, setSnapToGrid] = useState(true);
+  const [presenting, setPresenting] = useState(false);
+  const [iconPack, setIconPack] = useState('archimate');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [undoEntries, setUndoEntries] = useState<UndoEntry[]>([]);
+  const [conflict, setConflict] = useState<{ currentVersion?: number; current?: Model } | null>(null);
+  const [reauthPrompt, setReauthPrompt] = useState(false);
+  const [connectivity, setConnectivity] = useState<'online' | 'offline'>('online');
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !localStorage.getItem('openarch-onboarded'));
+  const [createSignal, setCreateSignal] = useState(0);
+  const [importSignal, setImportSignal] = useState(0);
+  const [allModels, setAllModels] = useState<Model[] | null>(null);
+  const [connectors, setConnectors] = useState<ConnectorConfig>(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('openarch-connectors') ?? '{}') as ConnectorConfig;
+    } catch {
+      return {};
+    }
+  });
 
-  const repository = useMemo<ModelRepository>(
-    () => (mode === 'local' ? new LocalRepository() : new ServerRepository(apiUrl)),
-    [mode],
+  useEffect(() => {
+    sessionStorage.setItem('openarch-connectors', JSON.stringify(connectors));
+  }, [connectors]);
+
+  const publishViewToConfluence = async () => {
+    if (!model || !currentView) return;
+    if (!connectors.confluenceBaseUrl || !connectors.token) {
+      notify('Set Confluence URL + token in Settings → Connectors first');
+      setTab('settings');
+      return;
+    }
+    try {
+      const { exportWorkspaceHtml } = await loadReporting();
+      const pageId = await publishToConfluence(
+        { ...connectors, confluenceSpaceKey: connectors.confluenceSpaceKey },
+        `${primaryText(model.name)} — ${primaryText(currentView.name)}`,
+        exportWorkspaceHtml(model),
+      );
+      notify(`Published to Confluence (page ${pageId})`);
+    } catch (error) {
+      notify(`Confluence publish failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    localStorage.getItem('openarch-theme') === 'dark' ? 'dark' : 'light',
   );
+
+  useEffect(() => {
+    const goOnline = () => setConnectivity('online');
+    const goOffline = () => setConnectivity('offline');
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('openarch-theme', theme);
+  }, [theme]);
+  const modelRef = useRef<Model | null>(null);
+  const savedModelRef = useRef<Model | null>(null);
+  const clipboardRef = useRef<string[]>([]);
+  const [clipboardCount, setClipboardCount] = useState(0);
+  const pasteCountRef = useRef(0);
+
+  const [gitConfig, setGitConfig] = useState<GitConfig | null>(null);
+  const [folderHandle, setFolderHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [gitDialogOpen, setGitDialogOpen] = useState(false);
+  const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
+
+  const repository = useMemo<ModelRepository>(() => {
+    if (mode === 'server') return new ServerRepository(apiUrl);
+    if (mode === 'folder' && folderHandle) {
+      return new FolderRepository(folderHandle as never, () => 'reject');
+    }
+    if (mode === 'git' && gitConfig) {
+      return new GitRepository(
+        createGitHubFileStore({
+          token: gitConfig.token,
+          owner: gitConfig.owner,
+          repo: gitConfig.repo,
+          branch: gitConfig.branch,
+          root: 'architecture',
+        }),
+        'architecture',
+      );
+    }
+    return new LocalRepository();
+  }, [mode, gitConfig, folderHandle]);
+
+  const changeMode = (next: Mode) => {
+    setMode(next);
+    if (next === 'git' && !gitConfig) setGitDialogOpen(true);
+    if (next === 'server' && !getAccessToken()) setTokenPromptOpen(true);
+    if (next === 'folder') void attachFolder();
+  };
+
+  // B1 attach: showDirectoryPicker (Chromium), persist the handle so reloads
+  // reattach with one permission re-grant; drift → ConflictReview (§9.1/§9.5).
+  const attachFolder = async () => {
+    const picker = (window as { showDirectoryPicker?: (options?: { id?: string; mode?: string }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
+    if (!picker) {
+      notify('Folder storage needs a Chromium browser (use Browser/Git instead)');
+      setMode('local');
+      return;
+    }
+    try {
+      const handle = await picker.call(window, { id: 'openarch-models', mode: 'readwrite' });
+      setFolderHandle(handle);
+      // Persist the handle for reattach (best-effort in IndexedDB).
+      const { set: idbSet } = await import('idb-keyval');
+      await idbSet('openarch-folder-handle', handle);
+      refreshWorkspaces();
+      notify(`Attached folder: ${handle.name}`);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setMode('local');
+        return;
+      }
+      notify(`Could not attach folder: ${error instanceof Error ? error.message : String(error)}`);
+      setMode('local');
+    }
+  };
+
+  // Reattach on load when the browser kept permission.
+  useEffect(() => {
+    if (mode !== 'folder' || folderHandle) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { get: idbGet } = await import('idb-keyval');
+        const handle = await idbGet<FileSystemDirectoryHandle>('openarch-folder-handle');
+        if (handle && !cancelled) {
+          const query = (handle as unknown as { queryPermission?: (d: { mode: string }) => Promise<string> }).queryPermission;
+          if (query && (await query.call(handle, { mode: 'readwrite' })) === 'granted') {
+            setFolderHandle(handle);
+          } else {
+            notify('Folder attached: re-grant access to continue (open Storage settings)');
+          }
+        }
+      } catch {
+        // No cached handle — the picker flow handles it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, folderHandle]);
+
 
   useEffect(() => {
     modelRef.current = model;
   }, [model]);
+
+  // Real-time collaboration (server mode): presence, focus, live notifications.
+  const collab = useCollab({
+    enabled: mode === 'server' && route === 'workspace' && !readOnly,
+    workspaceId: model?.id,
+    onEvent: (event) => {
+      if (event.type === 'comment') {
+        notify(`${event.comment.author} commented: “${event.comment.body.slice(0, 80)}”`);
+      }
+      if (event.type === 'saved' && event.by !== 'You') {
+        notify(`${event.by} saved revision v${event.version}${event.restore ? ' (restore)' : ''}`);
+      }
+      if (event.type === 'ops' && event.ops.length) {
+        for (const op of event.ops) ops.receiveOp(op, event.by);
+      }
+    },
+  });
 
   const notify = useCallback((message: string) => {
     setStatus(message);
     window.setTimeout(() => setStatus('Ready'), 5000);
   }, []);
 
-  const commit = useCallback((updater: (current: Model) => Model) => {
+  // C3 client: ops go straight to the server endpoint (per-op validated both
+  // sides), and incoming RT ops project live onto the open canvas below.
+  const ops = useOps({
+    enabled: mode === 'server' && route === 'workspace' && Boolean(model),
+    workspaceId: model?.id,
+    getModel: () => modelRef.current,
+    commitModel: (next) => commit(() => next),
+    postOps: async (id, batch) => {
+      const token = getAccessToken();
+      const credentials: RequestCredentials = mode === 'server' ? 'include' : 'same-origin';
+      const response = await fetch(`${apiUrl}/models/${encodeURIComponent(id)}/ops`, {
+        method: 'POST',
+        credentials,
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ ops: batch }),
+      });
+      if (!response.ok) throw new Error(`ops ${response.status}`);
+      return (await response.json()) as {
+        applied: number;
+        rejected: Array<{ seq: number; rule: string; message: string }>;
+        version: number;
+      };
+    },
+    notify,
+  });
+
+
+  const commit = useCallback((updater: (current: Model) => Model, label?: string) => {
     const current = modelRef.current;
     if (!current) return;
+    const next = updater(current);
+    // Crash journal: mirror the edit so a dead tab can recover <15s of work.
+    journalWrite({ id: next.id }, () => serializeNativeModel(next));
+    if (label) {
+      setUndoEntries((entries) =>
+        [...entries, { index: entries.length, model: next, summary: label }].slice(-60),
+      );
+    }
     setPast((history) => [...history, current].slice(-60));
     setFuture([]);
-    const next = updater(current);
     modelRef.current = next;
     setModel(next);
+    // No spurious dirty/undo entries for no-op helpers: same reference means
+    // nothing changed (align/distribute etc. return the model unchanged when
+    // a guard rejects, e.g. middle node ignored).
+    if (next !== current) setDirty(true);
   }, []);
 
   const undo = useCallback(() => {
@@ -169,6 +448,9 @@ export default function App() {
     setFuture((history) => [current, ...history].slice(0, 60));
     modelRef.current = previous;
     setModel(previous);
+    // Only mark dirty when the restored state actually differs from the
+    // last saved reference — undoing to the saved state is not a change.
+    setDirty(previous !== savedModelRef.current);
   }, [past]);
 
   const redo = useCallback(() => {
@@ -179,18 +461,79 @@ export default function App() {
     setPast((history) => [...history, current].slice(-60));
     modelRef.current = next;
     setModel(next);
+    setDirty(next !== savedModelRef.current);
   }, [future]);
+
+  // Report canvas selection up with a reference-stable update: re-rendering App
+  // mid-drag would cancel an in-progress connection.
+  const handleCanvasSelection = useCallback((nodeIds: string[]) => {
+    setSelectedNodeIds((prev) =>
+      prev.length === nodeIds.length && prev.every((id, i) => id === nodeIds[i]) ? prev : nodeIds,
+    );
+  }, []);
+
+  // Copy/paste/duplicate of the selected canvas subgraph (in-memory clipboard).
+  const duplicateSelection = useCallback(
+    (elementIds: string[]) => {
+      const current = modelRef.current;
+      if (!current || !elementIds.length) return;
+      const view = current.views[activeViewIndex];
+      if (!view) return;
+      pasteCountRef.current += 1;
+      const step = 40 * pasteCountRef.current;
+      commit((model) => duplicateElements(model, elementIds, view.id, { x: step, y: step }));
+      notify(`Duplicated ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
+    },
+    [activeViewIndex, commit, notify],
+  );
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
-      event.preventDefault();
-      if (event.shiftKey) redo();
-      else undo();
+      if (event.key === 'Escape' && paletteOpen) {
+        setPaletteOpen(false);
+        return;
+      }
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'k') {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      if (key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if (typing) return;
+      if (event.key === '?') {
+        event.preventDefault();
+        setShortcutHelpOpen((open) => !open);
+        return;
+      }
+      const current = modelRef.current;
+      const elementIds = current ? elementRefsForNodes(current, selectedNodeIds) : [];
+      if (key === 'c' && elementIds.length) {
+        event.preventDefault();
+        clipboardRef.current = elementIds;
+        setClipboardCount(elementIds.length);
+        pasteCountRef.current = 0;
+        notify(`Copied ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
+      } else if (key === 'v' && clipboardRef.current.length) {
+        event.preventDefault();
+        duplicateSelection(clipboardRef.current);
+      } else if (key === 'd' && elementIds.length) {
+        event.preventDefault();
+        duplicateSelection(elementIds);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [undo, redo]);
+  }, [undo, redo, selectedNodeIds, duplicateSelection, notify, paletteOpen]);
 
   const refreshWorkspaces = useCallback(async () => {
     try {
@@ -245,6 +588,8 @@ export default function App() {
           await syncVersion(requested);
           setRoute('workspace');
           setReadOnly(false);
+          setDirty(false);
+          setLastSavedAt(target.updatedAt ?? null);
           const requestedTab = new URLSearchParams(window.location.search).get('tab');
           if (requestedTab && PRIMARY_TABS.includes(requestedTab as Tab)) {
             setTab(requestedTab as Tab);
@@ -280,6 +625,30 @@ export default function App() {
   }, [notify]);
 
   const openWorkspace = async (id: string) => {
+    // Flush a pending autosave so switching workspaces never loses edits.
+    if (modelRef.current && dirty) await save({ silent: true });
+    // Crash recovery: if the journal holds work newer than the last save
+    // (killed tab, sleep, crash), offer it before the fresh copy overwrites.
+    try {
+      const journal = await journalRead(id, null);
+      if (journal && (await repository.getModel(id))) {
+        const fresh = await repository.getModel(id);
+        const lastSaved = fresh?.updatedAt ?? null;
+        const recoverable = await journalRead(id, lastSaved);
+        if (recoverable) {
+          const modelJson = String(recoverable.model);
+          const recovered = parseNativeModel(modelJson);
+          // Only offer when the journal actually differs from the saved copy.
+          if (JSON.stringify(recovered) !== JSON.stringify(fresh)) {
+            commit(() => recovered);
+            notify('Recovered unsaved changes from your last session');
+            journalClear(id);
+          }
+        }
+      }
+    } catch {
+      // Journal is best-effort recovery; never block opening a workspace.
+    }
     const next = await repository.getModel(id);
     if (!next) {
       notify('Workspace not found');
@@ -298,19 +667,29 @@ export default function App() {
     setPast([]);
     setFuture([]);
     setReadOnly(false);
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}?workspace=${encodeURIComponent(id)}`,
-    );
+    setDirty(false);
+    setLastSavedAt(next.updatedAt ?? null);
+    savedModelRef.current = next;
+    setSelectedNodeIds([]);
+    clipboardRef.current = [];
+    setClipboardCount(0);
+    // Keep the storage-mode parameter on deep links: a reload must land in
+    // the SAME mode (server/git), not silently fall back to local.
+    const params = new URLSearchParams(window.location.search);
+    params.set('workspace', id);
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
   };
 
   const goHome = () => {
+    if (modelRef.current && dirty) void save({ silent: true });
     setRoute('home');
     setModel(null);
     modelRef.current = null;
     setSelectedElementId(null);
     setPendingImport(null);
+    setDirty(false);
+    setLastSavedAt(null);
+    savedModelRef.current = null;
     window.history.replaceState(null, '', window.location.pathname);
     void refreshWorkspaces();
   };
@@ -320,6 +699,50 @@ export default function App() {
     const loaded = await Promise.all(list.map((workspace) => repository.getModel(workspace.id)));
     setPortfolioModels(loaded.filter((item): item is Model => Boolean(item)));
     setRoute('portfolio');
+  };
+
+  // Backup-all: every workspace as one JSON archive (and back).
+  const exportAll = async () => {
+    const list = await repository.listModels();
+    const models = (await Promise.all(list.map((workspace) => repository.getModel(workspace.id)))).filter(
+      (item): item is Model => Boolean(item),
+    );
+    downloadFile(
+      'openarch-backup.json',
+      JSON.stringify(
+        { kind: 'openarch-backup', schemaVersion: NATIVE_SCHEMA_VERSION, exportedAt: new Date().toISOString(), models },
+        null,
+        2,
+      ),
+      'application/json',
+    );
+    notify(`Exported ${models.length} workspace(s)`);
+  };
+
+  const importBackup = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text()) as { models?: unknown[] } | unknown[];
+      const models = Array.isArray(parsed) ? parsed : parsed?.models;
+      if (!Array.isArray(models) || models.length === 0) throw new Error('Not an OpenArch backup file');
+      const existing = new Set((await repository.listModels()).map((workspace) => workspace.id));
+      let count = 0;
+      for (const raw of models) {
+        // Round-trip through the native parser so migration + validation run.
+        const model = parseNativeModel(JSON.stringify(raw));
+        // Duplicate ids within one archive must not overwrite each other.
+        let toSave = model.id;
+        if (existing.has(toSave)) {
+          toSave = `model-${crypto.randomUUID()}`;
+        }
+        existing.add(toSave);
+        await repository.saveModel(toSave === model.id ? model : { ...model, id: toSave });
+        count += 1;
+      }
+      await refreshWorkspaces();
+      notify(`Imported ${count} workspace(s) from backup`);
+    } catch (error) {
+      notify(`Backup import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   const createWorkspace = async (input: CreateWorkspaceInput) => {
@@ -365,22 +788,89 @@ export default function App() {
     notify('Workspace deleted');
   };
 
-  const save = async () => {
-    if (!model || readOnly) return;
-    try {
-      await repository.saveModel(model, modelVersion);
-      await syncVersion(model.id);
-      await refreshWorkspaces();
-      notify('Workspace saved');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/conflict/i.test(message)) {
-        notify('Save rejected: someone else changed this workspace. Reload to get their changes.');
-      } else {
-        notify(`Save failed: ${message}`);
+  const save = useCallback(
+    async (options: { silent?: boolean; forceVersion?: number } = {}) => {
+      const savedId = modelRef.current?.id;
+      const current = modelRef.current;
+      if (!current || readOnly) return;
+      try {
+        await withErrorClass(() => repository.saveModel(current, options.forceVersion ?? modelVersion));
+        await syncVersion(current.id);
+        await refreshWorkspaces();
+        // Only update save-state if we are still on the same workspace —
+        // an in-flight save must never clear a DIFFERENT workspace's flags.
+        if (modelRef.current?.id === savedId) {
+          setDirty(false);
+          setLastSavedAt(new Date().toISOString());
+          savedModelRef.current = current;
+          // The repository now has this work: drop the crash journal copy.
+          if (savedId) journalClear(savedId);
+        }
+        if (!options.silent) {
+          const errors = validateModel(current).filter((issue) => issue.severity === 'error').length;
+          notify(
+            errors > 0
+              ? `Workspace saved with ${errors} validation error(s) — see the Validation tab`
+              : 'Workspace saved',
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (error instanceof ReauthError) {
+          setReauthPrompt(true);
+          notify('Session expired — sign in again to keep your changes');
+          return;
+        }
+        if (error instanceof OfflineError) {
+          notify('Not sent yet: changes stay in this tab — the server will be retried');
+          return;
+        }
+        if (/conflict/i.test(message)) {
+          const conflictError = error as Error & { currentVersion?: number; current?: Model };
+          setConflict({ currentVersion: conflictError.currentVersion, current: conflictError.current });
+          notify('Save conflict: this workspace changed on the server');
+        } else {
+          notify(`Save failed: ${message}`);
+        }
       }
-    }
-  };
+    },
+    [readOnly, repository, modelVersion, syncVersion, refreshWorkspaces, notify],
+  );
+
+  // Autosave: debounced save a moment after the last edit, with a maximum
+  // delay (15 s from the FIRST unsaved edit) so continuous editing cannot
+  // postpone saves forever. The per-edit debounce stays 1.5 s.
+  const autosaveSinceRef = useRef(0);
+  useEffect(() => {
+    if (!dirty || readOnly || !modelRef.current) return;
+    if (!autosaveSinceRef.current) autosaveSinceRef.current = Date.now();
+    const elapsed = Date.now() - autosaveSinceRef.current;
+    const delay = elapsed >= 15000 ? 1 : Math.min(1500, 15000 - elapsed);
+    const timer = window.setTimeout(() => {
+      autosaveSinceRef.current = 0;
+      void save({ silent: true });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [dirty, model, readOnly, save]);
+
+  // Global search: load every workspace's model once when the palette first
+  // opens, so ⌘K searches elements across all workspaces.
+  useEffect(() => {
+    if (!paletteOpen || allModels) return;
+    let cancelled = false;
+    (async () => {
+      const list = await repository.listModels();
+      const loaded = await Promise.all(list.map((workspace) => repository.getModel(workspace.id)));
+      if (!cancelled) {
+        setAllModels(loaded.filter((item): item is Model => Boolean(item)));
+      }
+    })().catch(() => {
+      if (!cancelled) setAllModels([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [paletteOpen, allModels, repository]);
 
   const importFile = async (file: File) => {
     try {
@@ -391,11 +881,18 @@ export default function App() {
         if (result.warnings.length) {
           notify(`Imported with ${result.warnings.length} warning(s)`);
         }
+      } else if (file.name.toLowerCase().endsWith('.drawio') || file.name.toLowerCase().endsWith('.xml.drawio')) {
+        const { importDrawIo } = await import('@openarch/enrichment');
+        const result = importDrawIo(await file.text());
+        imported = result.model;
+        if (result.warnings.length) notify(`draw.io import: ${result.warnings.length} warning(s)`);
+      } else if (file.name.toLowerCase().endsWith('.dsl') || file.name.toLowerCase().endsWith('.structurizr')) {
+        imported = c4ToModel(parseStructurizr(await file.text()));
       } else {
         const text = await file.text();
         imported = file.name.toLowerCase().endsWith('.json')
-          ? parseNativeModel(text)
-          : parseAoef(text);
+          ? await parseNativeAsync(text)
+          : await parseAoefAsync(text);
       }
       if (route === 'workspace' && model) {
         setPendingImport({ incoming: imported, diff: diffModels(model, imported) });
@@ -410,9 +907,15 @@ export default function App() {
     }
   };
 
-  const confirmImport = async (mode: 'replace' | 'add') => {
+  const confirmImport = async (mode: 'replace' | 'add' | 'merge') => {
     if (!pendingImport) return;
     const imported = pendingImport.incoming;
+    if (mode === 'merge' && model) {
+      commit(() => mergeModels(model, imported));
+      setPendingImport(null);
+      notify(`Merged ${diffSummary(diffModels(model, imported))} into current workspace`);
+      return;
+    }
     try {
       await repository.saveModel(imported);
       await refreshWorkspaces();
@@ -423,7 +926,6 @@ export default function App() {
       return;
     }
     setPendingImport(null);
-    void mode;
   };
 
   const currentView = model?.views[activeViewIndex];
@@ -521,14 +1023,53 @@ export default function App() {
     notify('Exported .archimate');
   };
 
-  const exportReport = () => {
+  const exportC4File = () => {
     if (!model) return;
+    downloadFile(
+      `${slug(primaryText(model.name))}.dsl`,
+      modelToC4(model, currentView),
+      'text/plain',
+    );
+    notify('Exported C4/Structurizr DSL');
+  };
+
+  const exportReport = async () => {
+    if (!model) return;
+    const { exportWorkspaceMarkdown } = await loadReporting();
     downloadFile(
       `${slug(primaryText(model.name))}-report.md`,
       exportWorkspaceMarkdown(model),
       'text/markdown',
     );
     notify('Exported workspace report');
+  };
+
+  const exportDocx = async () => {
+    if (!model) return;
+    const { exportWorkspaceDocx } = await loadReporting();
+    const bytes = await exportWorkspaceDocx(model);
+    downloadFile(
+      `${slug(primaryText(model.name))}-report.docx`,
+      new Blob([bytes as BlobPart], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      }),
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    notify('Exported DOCX report');
+  };
+
+  const exportPptx = async () => {
+    if (!model) return;
+    const { exportViewsPptx } = await loadReporting();
+    const bytes = await exportViewsPptx(model);
+    downloadFile(
+      `${slug(primaryText(model.name))}-views.pptx`,
+      new Blob([bytes as BlobPart], {
+        type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      }),
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    );
+    notify('Exported PPTX deck');
   };
 
   const share = async () => {
@@ -601,6 +1142,211 @@ export default function App() {
       elements: current.elements.map((element) => (element.id === id ? { ...element, ...patch } : element)),
     }));
   };
+
+  // Canvas delete: node/edge ids are resolved to element/relationship refs and
+  // removed from the canonical model, so deletions survive re-renders.
+  const deleteNodes = (nodeIds: string[]) => {
+    const current = modelRef.current;
+    if (!current) return;
+    const elementIds = elementRefsForNodes(current, nodeIds);
+    if (!elementIds.length) return;
+    commit((model) => removeElements(model, elementIds));
+    setSelectedElementId((selected) => (selected && elementIds.includes(selected) ? null : selected));
+    notify(`Deleted ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
+  };
+
+  const deleteEdges = (edgeIds: string[]) => {
+    const current = modelRef.current;
+    if (!current) return;
+    const relationshipIds = relationshipRefsForEdges(current, edgeIds);
+    if (!relationshipIds.length) return;
+    commit((model) => removeRelationships(model, relationshipIds));
+    notify(`Deleted ${relationshipIds.length} relationship${relationshipIds.length === 1 ? '' : 's'}`);
+  };
+
+  const bulkAssign = (elementIds: string[], patch: { domain?: string; environment?: string }) => {
+    commit((model) => assignElements(model, elementIds, patch));
+    notify(`Updated ${elementIds.length} element${elementIds.length === 1 ? '' : 's'}`);
+  };
+
+  const alignSelection = (alignment: NodeAlignment) => {
+    const current = modelRef.current;
+    if (!current || selectedNodeIds.length < 2) return;
+    const view = current.views[activeViewIndex];
+    if (!view) return;
+    commit((model) => alignNodes(model, view.id, selectedNodeIds, alignment));
+  };
+
+  const distributeSelection = (axis: 'x' | 'y') => {
+    const current = modelRef.current;
+    if (!current || selectedNodeIds.length < 3) return;
+    const view = current.views[activeViewIndex];
+    if (!view) return;
+    commit((model) => distributeNodes(model, view.id, selectedNodeIds, axis));
+  };
+
+  const renameElement = (id: string, name: string) => {
+    commit((model) => ({
+      ...model,
+      elements: model.elements.map((element) =>
+        // Replace only the English entry — other locales survive.
+        element.id === id
+          ? {
+              ...element,
+              name: [
+                { lang: 'en', value: name },
+                ...element.name.filter((text) => text.lang !== 'en'),
+              ],
+            }
+          : element,
+      ),
+    }));
+  };
+
+  const duplicateNodes = (nodeIds: string[]) => {
+    const current = modelRef.current;
+    if (!current) return;
+    duplicateSelection(elementRefsForNodes(current, nodeIds));
+  };
+
+  const pasteClipboard = () => {
+    if (clipboardRef.current.length) duplicateSelection(clipboardRef.current);
+  };
+
+  const addElementAt = (type: string, position: Point) => {
+    const elementId = `el-${crypto.randomUUID()}`;
+    const nodeId = `node-${crypto.randomUUID()}`;
+    commit((current) => {
+      const index = current.elements.length;
+      const element: ArchiElement = {
+        id: elementId,
+        type,
+        name: [{ lang: 'en', value: `${getElementType(type)?.label ?? type} ${index + 1}` }],
+        documentation: [],
+        properties: [],
+        domain: domainFilter === 'all' ? undefined : domainFilter,
+        environment: environmentFilter === 'all' ? undefined : environmentFilter,
+      };
+      return {
+        ...current,
+        elements: [...current.elements, element],
+        views: current.views.map((view, viewIndex) =>
+          viewIndex === activeViewIndex
+            ? {
+                ...view,
+                nodes: [
+                  ...view.nodes,
+                  {
+                    id: nodeId,
+                    type: 'Element',
+                    elementRef: elementId,
+                    label: [],
+                    bounds: {
+                      x: Math.max(0, Math.round(position.x - 85)),
+                      y: Math.max(0, Math.round(position.y - 32)),
+                      w: 170,
+                      h: 64,
+                    },
+                  },
+                ],
+              }
+            : view,
+        ),
+      };
+    });
+    setSelectedElementId(elementId);
+  };
+
+  const reconnectEdge = (edgeId: string, sourceNodeId: string, targetNodeId: string) => {
+    const current = modelRef.current;
+    if (!current) return;
+    const sourceElementId = elementRefsForNodes(current, [sourceNodeId])[0];
+    const targetElementId = elementRefsForNodes(current, [targetNodeId])[0];
+    if (!sourceElementId || !targetElementId || sourceElementId === targetElementId) return;
+    const source = current.elements.find((element) => element.id === sourceElementId);
+    const target = current.elements.find((element) => element.id === targetElementId);
+    if (!source || !target) return;
+    if (!allowedRelationships(source.type, target.type).length) {
+      notify('No valid relationship for these element types');
+      return;
+    }
+    const relationshipIds = relationshipRefsForEdges(current, [edgeId]);
+    if (!relationshipIds.length) return;
+    commit((model) =>
+      relationshipIds.reduce(
+        (acc, relationshipId) => reconnectRelationship(acc, relationshipId, sourceElementId, targetElementId),
+        model,
+      ),
+    );
+    notify('Relationship reconnected');
+  };
+
+  const currentViewId = () => modelRef.current?.views[activeViewIndex]?.id;
+
+  const addBendpoint = (edgeId: string, point: Point) => {
+    const viewId = currentViewId();
+    if (!viewId) return;
+    commit((model) => addEdgeBendpoint(model, viewId, edgeId, point));
+  };
+
+  const moveBendpoint = useCallback(
+    (edgeId: string, index: number, point: Point) => {
+      const viewId = modelRef.current?.views[activeViewIndex]?.id;
+      const edge = viewId
+        ? modelRef.current?.views.find((v) => v.id === viewId)?.edges.find((e) => e.id === edgeId)
+        : undefined;
+      if (!viewId || !edge) return;
+      commit((model) =>
+        setEdgeBendpoints(
+          model,
+          viewId,
+          edgeId,
+          edge.bendpoints.map((b, i) => (i === index ? point : b)),
+        ),
+      );
+    },
+    [activeViewIndex, commit],
+  );
+
+  const groupSelection = () => {
+    const viewId = currentViewId();
+    if (!viewId || selectedNodeIds.length < 2) return;
+    commit((model) => groupNodes(model, viewId, selectedNodeIds));
+    notify(`Grouped ${selectedNodeIds.length} nodes`);
+  };
+
+  const ungroupSelection = () => {
+    const viewId = currentViewId();
+    if (!viewId) return;
+    commit((model) => ungroupNodes(model, viewId, selectedNodeIds));
+    notify('Ungrouped');
+  };
+
+  const zOrder = (position: 'front' | 'back') => {
+    const viewId = currentViewId();
+    if (!viewId || !selectedNodeIds.length) return;
+    commit((model) => setNodeZOrder(model, viewId, selectedNodeIds, position));
+  };
+
+  // Presentation keyboard: ←/→ switch views, F toggles fullscreen, Esc exits.
+  useEffect(() => {
+    if (!presenting) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPresenting(false);
+      if (event.key === 'ArrowRight') {
+        setActiveViewIndex((index) => Math.min(index + 1, modelRef.current ? modelRef.current.views.length - 1 : index));
+      }
+      if (event.key === 'ArrowLeft') {
+        setActiveViewIndex((index) => Math.max(0, index - 1));
+      }
+      if (event.key.toLowerCase() === 'f') {
+        if (document.fullscreenElement) void document.exitFullscreen();
+        else void document.documentElement.requestFullscreen().catch(() => undefined);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [presenting]);
 
   const updateModelMeta = (patch: Partial<Model>) => {
     commit((current) => ({ ...current, ...patch }));
@@ -683,7 +1429,15 @@ export default function App() {
     commit((current) => ({
       ...current,
       views: current.views.map((item, i) =>
-        i === index ? { ...item, name: [{ lang: 'en', value: name }] } : item,
+        i === index
+          ? {
+              ...item,
+              name: [
+                { lang: 'en', value: name },
+                ...item.name.filter((text) => text.lang !== 'en'),
+              ],
+            }
+          : item,
       ),
     }));
   };
@@ -713,13 +1467,202 @@ export default function App() {
     notify('View regenerated from its recipe');
   };
 
+  // ⌘K palette: workspaces, views, elements of the open model, and actions.
+  // Memoised so ⌘K keystrokes don't rebuild the whole array per render;
+  // cross-workspace items are capped (a huge portfolio must not freeze the UI).
+  const commands: CommandItem[] = useMemo(() => {
+    return [
+    { id: 'cmd-home', group: 'Navigate', label: 'Go to workspace list', run: () => goHome() },
+    { id: 'cmd-portfolio', group: 'Navigate', label: 'Open portfolio', run: () => void openPortfolio() },
+    { id: 'cmd-save', group: 'Actions', label: 'Save workspace', keywords: 'save persist', run: () => void save() },
+    { id: 'cmd-export-aoef', group: 'Actions', label: 'Export AOEF (.xml)', keywords: 'export xml aoef', run: () => exportAoef() },
+    { id: 'cmd-export-json', group: 'Actions', label: 'Export native JSON', keywords: 'export json', run: () => exportJson() },
+    { id: 'cmd-export-svg', group: 'Actions', label: 'Export current view as SVG', keywords: 'export svg image', run: () => exportSvg() },
+    { id: 'cmd-export-png', group: 'Actions', label: 'Export current view as PNG', keywords: 'export png image', run: () => void exportPng() },
+    { id: 'cmd-export-csv', group: 'Actions', label: 'Export elements as CSV', keywords: 'export csv table', run: () => exportCsv() },
+    { id: 'cmd-share', group: 'Actions', label: 'Copy share link', keywords: 'share link url', run: () => void share() },
+    { id: 'cmd-present', group: 'Actions', label: 'Start presentation mode', keywords: 'present slides fullscreen', run: () => setPresenting(true) },
+    {
+      id: 'cmd-theme',
+      group: 'Actions',
+      label: `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`,
+      keywords: 'theme dark light appearance',
+      run: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
+    },
+    ...workspaces.map((workspace) => ({
+      id: `ws-${workspace.id}`,
+      group: 'Workspaces',
+      label: workspace.name,
+      keywords: workspace.tags.join(' '),
+      run: () => void openWorkspace(workspace.id),
+    })),
+    ...(model?.views ?? []).map((view, index) => ({
+      id: `view-${view.id}`,
+      group: 'Views',
+      label: primaryText(view.name) || view.id,
+      run: () => {
+        setActiveViewIndex(index);
+        setTab('editor');
+      },
+    })),
+    ...(model?.elements ?? []).map((element) => ({
+      id: `el-${element.id}`,
+      group: 'Elements',
+      label: `${primaryText(element.name) || element.id} — ${element.type}`,
+      keywords: `${element.type} ${element.domain ?? ''} ${element.environment ?? ''}`,
+      run: () => {
+        setSelectedElementId(element.id);
+        setTab('editor');
+      },
+    })),
+    // Cross-workspace search: elements from every other workspace.
+    ...(allModels ?? [])
+      .filter((candidate) => candidate.id !== model?.id)
+      .slice(0, 100)
+      .flatMap((workspace) =>
+        workspace.elements.map((element) => ({
+          id: `ws-${workspace.id}-el-${element.id}`,
+          group: `Search · ${primaryText(workspace.name) || workspace.id}`,
+          label: `${primaryText(element.name) || element.id} — ${element.type}`,
+          keywords: `${element.type} ${element.domain ?? ''} ${element.environment ?? ''}`,
+          run: () => {
+            void openWorkspace(workspace.id).then(() => {
+              setSelectedElementId(element.id);
+              setTab('editor');
+            });
+          },
+        })),
+      ),
+  ];
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers are stable or defined above; rebuilding on model/workspaces changes is intended
+  }, [workspaces, model, allModels, theme, goHome, save, exportAoef, exportJson, exportSvg, exportPng, exportCsv, share, setPresenting, openWorkspace, openPortfolio]);
+
   const selectedElement = model?.elements.find((element) => element.id === selectedElementId);
   const primaryTabs = PRIMARY_TABS;
-  const analysisTabs: AnalysisTab[] = ['dashboard', 'eam', 'validation', 'trace', 'matrices', 'deployment', 'interfaces', 'domains'];
+  const analysisTabs: AnalysisTab[] = ['dashboard', 'eam', 'validation', 'trace', 'matrices', 'deployment', 'interfaces', 'domains', 'streams', 'traceability', 'timeline'];
+
+  const canvasElement = model && scopedView ? (
+    <Canvas
+      view={scopedView}
+      elements={scopedModel?.elements ?? []}
+      relationships={scopedModel?.relationships ?? []}
+      domains={model.domains ?? []}
+      visibleLayers={visibleLayers}
+      environmentFilter={environmentFilter}
+      onSelectElement={setSelectedElementId}
+      onNodeMove={moveNode}
+      onAddElement={addElement}
+      onAddElementAt={addElementAt}
+      onConnect={requestConnection}
+      onReconnectEdge={reconnectEdge}
+      onAddBendpoint={addBendpoint}
+      onMoveBendpoint={moveBendpoint}
+      onNodesDelete={deleteNodes}
+      onEdgesDelete={deleteEdges}
+      onBulkAssign={bulkAssign}
+      onAlign={alignSelection}
+      onDistribute={distributeSelection}
+      onGroup={groupSelection}
+      onUngroup={ungroupSelection}
+      onZOrder={zOrder}
+      snapToGrid={snapToGrid}
+      presenting={presenting}
+      fitSignal={presenting ? 1 : 0}
+      colorMode={theme}
+      iconPack={iconPack}
+      onSelectionChange={handleCanvasSelection}
+      onRenameElement={renameElement}
+      onDuplicateNodes={duplicateNodes}
+      onPaste={pasteClipboard}
+      hasClipboard={clipboardCount > 0}
+    />
+  ) : null;
+
+  // Presentation mode: canvas only, no chrome. Esc or the corner button exits.
+  if (presenting && canvasElement) {
+    return (
+      <LanguageContext.Provider value={language}>
+        <div className="app presenting">
+          {canvasElement}
+          <div className="present-hud">
+            <span className="muted">
+              {model ? primaryText(model.views[activeViewIndex]?.name ?? []) : ''} · ←/→ views · F fullscreen
+            </span>
+            <button className="present-exit" onClick={() => setPresenting(false)}>
+              ✕ Exit (Esc)
+            </button>
+          </div>
+        </div>
+      </LanguageContext.Provider>
+    );
+  }
+
+  const dismissOnboarding = () => {
+    localStorage.setItem('openarch-onboarded', '1');
+    setOnboardingOpen(false);
+  };
 
   if (route === 'home') {
     return (
       <LanguageContext.Provider value={language}>
+        {onboardingOpen && (
+          <OnboardingWizard
+            checks={{
+              probeServer: async (url) => {
+                // HEAD the base server URL (without /api suffix)
+                const base = url.replace(/\/api\/?$/, '');
+                try {
+                  const response = await fetch(`${base}/health`, {
+                    signal: AbortSignal.timeout(5000),
+                    credentials: 'omit',
+                  });
+                  return response.ok;
+                } catch {
+                  return false;
+                }
+              },
+              validateServerToken: async (url, token_bearer) => {
+                try {
+                  const response = await fetch(`${url.replace(/\/$/, '')}/me`, {
+                    headers: { authorization: `Bearer ${token_bearer}` },
+                    credentials: 'include',
+                    signal: AbortSignal.timeout(8000),
+                  });
+                  if (!response.ok) return null;
+                  const me = (await response.json()) as { subject: string; displayName?: string };
+                  return me.displayName ?? me.subject;
+                } catch {
+                  return null;
+                }
+              },
+              suggestedServerUrl: apiUrl,
+            }}
+            onFinish={(config) => {
+              dismissOnboarding();
+              if (config.mode === 'server' && config.serverUrl) {
+                // Persist the server URL + token for the session
+                window.sessionStorage.setItem('openarch-server-url', config.serverUrl);
+                setMode('server');
+              } else if (config.mode === 'folder') {
+                // Trigger the folder picker in the app shell
+                setMode('folder');
+              }
+              // Create the chosen workspace
+              const template = WORKSPACE_TEMPLATES.find((candidate) => candidate.id === config.templateId);
+              if (template) {
+                void createWorkspace({
+                  name: config.workspaceName,
+                  description: '',
+                  purpose: template.purpose,
+                  templateId: config.templateId,
+                  owner: '',
+                  tags: [],
+                });
+              }
+            }}
+            onSkip={dismissOnboarding}
+          />
+        )}
         <WorkspaceHome
           workspaces={workspaces}
           onCreate={createWorkspace}
@@ -729,6 +1672,81 @@ export default function App() {
           onDelete={deleteWorkspace}
           onImport={importFile}
           onOpenPortfolio={openPortfolio}
+          onExportAll={() => void exportAll()}
+          onImportBackup={(file) => void importBackup(file)}
+          createSignal={createSignal}
+          importSignal={importSignal}
+        />
+        {tokenPromptOpen && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Server access">
+            <div className="modal">
+              <header className="modal-header">
+                <h2>Server access (optional)</h2>
+                <button className="icon-button" onClick={() => setTokenPromptOpen(false)} aria-label="Close">×</button>
+              </header>
+              <div className="modal-body">
+                <p>
+                  If your server requires authentication, paste your access token. It identifies you to the
+                server (name shown to collaborators), is kept in this tab only (sessionStorage), and is
+                never written to disk. Leave empty for open servers.
+                </p>
+                <input
+                  className="form-input full"
+                  type="password"
+                  placeholder="Bearer token (static token, HS256 JWT, or OIDC token)"
+                  onChange={(event) => setAccessToken(event.target.value.trim() || undefined)}
+                />
+              </div>
+              <footer className="modal-footer">
+                <button onClick={() => setTokenPromptOpen(false)}>Continue</button>
+              </footer>
+            </div>
+          </div>
+        )}
+
+        {reauthPrompt && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Sign in again">
+            <div className="modal">
+              <header className="modal-header">
+                <h2>Session expired</h2>
+                <button className="icon-button" onClick={() => setReauthPrompt(false)} aria-label="Close">×</button>
+              </header>
+              <div className="modal-body">
+                <p>Your changes are safe in this tab. Sign in again to continue saving to the server.</p>
+              </div>
+              <footer className="modal-footer">
+                <button onClick={() => setReauthPrompt(false)}>Work offline for now</button>
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    setReauthPrompt(false);
+                    setTokenPromptOpen(true);
+                  }}
+                >
+                  Sign in again
+                </button>
+              </footer>
+            </div>
+          </div>
+        )}
+
+        {shortcutHelpOpen && <ShortcutHelp onClose={() => setShortcutHelpOpen(false)} />}", 1)
+        {historyOpen && (
+          <UndoTimeline
+            entries={undoEntries}
+            currentIndex={-1}
+            onJump={() => {
+              notify('Restored state from history');
+            }}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
+
+        <CommandPalette
+          open={paletteOpen}
+          items={commands}
+          onClose={() => setPaletteOpen(false)}
+          onRun={(item) => item.run()}
         />
       </LanguageContext.Provider>
     );
@@ -738,6 +1756,12 @@ export default function App() {
     return (
       <LanguageContext.Provider value={language}>
         <Portfolio models={portfolioModels} onOpen={openWorkspace} onBack={goHome} />
+        <CommandPalette
+          open={paletteOpen}
+          items={commands}
+          onClose={() => setPaletteOpen(false)}
+          onRun={(item) => item.run()}
+        />
       </LanguageContext.Provider>
     );
   }
@@ -749,8 +1773,10 @@ export default function App() {
           workspaceName={model ? primaryText(model.name) : ''}
           mode={mode}
           language={language}
+          theme={theme}
+          onThemeChange={setTheme}
           onLanguageChange={setLanguage}
-          onModeChange={setMode}
+          onModeChange={changeMode}
           onHome={goHome}
           onImport={importFile}
           onExportAoef={exportAoef}
@@ -760,37 +1786,71 @@ export default function App() {
           onExportCsv={exportCsv}
           onExportMermaid={exportMermaidFile}
           onExportArchi={exportArchiFile}
+          onExportC4={exportC4File}
+          onExportDocx={() => void exportDocx()}
+          onExportPptx={() => void exportPptx()}
           onExportReport={exportReport}
+          onPublishConfluence={() => void publishViewToConfluence()}
           onShare={share}
-          onSave={save}
+          onSave={() => void save()}
         />
 
         <main className="main">
           <header className="topbar">
-            <nav className="tabs" aria-label="Workspace views">
+            <nav className="tabs" role="tablist" aria-label="Workspace views">
               {primaryTabs.map((name) => (
                 <button key={name} className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>
+                    role="tab"
+                    aria-selected={tab === name}
                   {t(name)}
                 </button>
               ))}
             </nav>
             <div className="topbar-right">
-              <button onClick={() => setShowSavedViews(true)} title="Saved views">☆ Views</button>
+              <button onClick={() => setPaletteOpen(true)} title={t('paletteButton')}>⌘K</button>
+              <button onClick={() => setShowSavedViews(true)} title={t('viewsButton')}>☆ Views</button>
+              {tab === 'editor' && <button onClick={() => setPresenting(true)} title={t('presentButton')}>▶ {t('present')}</button>}
+              <button onClick={() => setHistoryOpen(true)} title="History timeline">◷</button>
               <button onClick={undo} disabled={past.length === 0} title={t('undo')}>↶</button>
               <button onClick={redo} disabled={future.length === 0} title={t('redo')}>↷</button>
               <span className="model-title">{model ? primaryText(model.name) : 'No workspace'}</span>
               {readOnly && <span className="mode-badge">read-only</span>}
               <span className="mode-badge">{mode}</span>
-              <span className="status" title={status}>{status}</span>
+              {!readOnly && model && (
+                <span className={`save-badge ${dirty ? 'dirty' : ''}`} title={lastSavedAt ?? undefined}>
+                  {dirty
+                    ? t('unsavedChanges')
+                    : lastSavedAt
+                      ? `${t('saved')} ${new Date(lastSavedAt).toLocaleTimeString()}`
+                      : t('saved')}
+                </span>
+              )}
+              <span className="status" title={status} aria-live="polite">{status}</span>
+              {mode === 'server' && route === 'workspace' && (
+                <span
+                  className={`presence-strip ${connectivity === 'offline' ? 'offline' : ''}`}
+                  title={connectivity === 'offline' ? 'Server unreachable — changes stay queued' : collab.status === 'live' ? 'Live collaboration connected' : collab.status}
+                >
+                  {collab.status === 'live' ? '●' : '○'}
+                  {collab.presence.length > 1
+                    ? collab.presence
+                        .map((user) => user.displayName.split(' ')[0] + (user.focus ? ' (focus)' : ''))
+                        .join(', ')
+                    : collab.status === 'live'
+                      ? 'You'
+                      : collab.status}
+                </span>
+              )}
             </div>
           </header>
 
           <div className="content">
             <div className="workspace">
+              <ErrorBoundary key={tab} name={tab}>
               {!model ? (
                 <div className="placeholder">
-                  <h2>No workspace open</h2>
-                  <p>Return to the workspace list to open or create one.</p>
+                  <h2>{t('noWorkspace')}</h2>
+                  <p>{t('noWorkspaceHint')}</p>
                 </div>
               ) : tab === 'editor' && scopedView ? (
                 <>
@@ -798,8 +1858,8 @@ export default function App() {
                     {model.views.map((view, index) => (
                       <span key={view.id} className={`view-tab ${index === activeViewIndex ? 'active' : ''}`}>
                         <button onClick={() => setActiveViewIndex(index)}>{primaryText(view.name) || view.id}</button>
-                        <button className="view-tab-action" onClick={() => renameView(index)} title="Rename view">✎</button>
-                        <button className="view-tab-action" onClick={() => deleteView(index)} title="Delete view">×</button>
+                        <button className="view-tab-action" onClick={() => renameView(index)} title={t('renameView')} aria-label={t('renameView')}>✎</button>
+                        <button className="view-tab-action" onClick={() => deleteView(index)} title={t('deleteView')} aria-label={t('deleteView')}>×</button>
                       </span>
                     ))}
                     <button className="small-button" onClick={addView}>+ View</button>
@@ -824,6 +1884,24 @@ export default function App() {
                         <option value="staging">staging</option>
                         <option value="prod">prod</option>
                       </select>
+                      <label title={t('snapHint')}>
+                        <input
+                          type="checkbox"
+                          checked={snapToGrid}
+                          onChange={(event) => setSnapToGrid(event.target.checked)}
+                        />
+                        {t('snap')}
+                      </label>
+                      <select
+                        value={iconPack}
+                        aria-label="Icon pack"
+                        title="Icon pack (view styling only)"
+                        onChange={(event) => setIconPack(event.target.value)}
+                      >
+                        {ICON_PACKS.map((pack) => (
+                          <option key={pack.id} value={pack.id}>{pack.label}</option>
+                        ))}
+                      </select>
                       {LAYER_ORDER.filter((layer) => model.elements.some((element) => getElementType(element.type)?.layer === layer)).map((layer) => (
                         <label key={layer}>
                           <input
@@ -843,24 +1921,10 @@ export default function App() {
                       ))}
                     </div>
                   </div>
-                  <div className="editor-area">
-                    <Canvas
-                      view={scopedView}
-                      elements={scopedModel?.elements ?? []}
-                      relationships={scopedModel?.relationships ?? []}
-                      domains={model.domains ?? []}
-                      selectedElementId={selectedElementId}
-                      visibleLayers={visibleLayers}
-                      environmentFilter={environmentFilter}
-                      onSelectElement={setSelectedElementId}
-                      onNodeMove={moveNode}
-                      onAddElement={addElement}
-                      onConnect={requestConnection}
-                    />
-                  </div>
+                  <div className="editor-area">{canvasElement}</div>
                   {magic && (
                     <div className="magic-menu">
-                      <strong>Choose relationship</strong>
+                      <strong>{t('chooseRelationship')}</strong>
                       <span>
                         {primaryText(model.elements.find((element) => element.id === magic.sourceElementId)?.name ?? [])} →{' '}
                         {primaryText(model.elements.find((element) => element.id === magic.targetElementId)?.name ?? [])}
@@ -872,7 +1936,7 @@ export default function App() {
                           </button>
                         ))}
                       </div>
-                      <button className="link-button" onClick={() => setMagic(null)}>Cancel</button>
+                      <button className="link-button" onClick={() => setMagic(null)}>{t('cancel')}</button>
                     </div>
                   )}
                 </>
@@ -905,8 +1969,14 @@ export default function App() {
                     <DeploymentView model={model} environment={environmentFilter} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
                   ) : analysisTab === 'interfaces' ? (
                     <InterfaceCatalog model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
-                  ) : (
+                  ) : analysisTab === 'domains' ? (
                     <DomainMap model={model} onSelectDomain={(id) => { setDomainFilter(id); setTab('editor'); }} />
+                  ) : analysisTab === 'streams' ? (
+                    <ValueStreams model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
+                  ) : analysisTab === 'traceability' ? (
+                    <TraceabilityPanel model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
+                  ) : (
+                    <MigrationTimelinePanel model={model} onSelect={(id) => { setSelectedElementId(id); setTab('editor'); }} />
                   )}
                 </>
               ) : tab === 'views' ? (
@@ -943,17 +2013,25 @@ export default function App() {
                   }}
                 />
               ) : tab === 'enrichment' ? (
-                <Enrichment
-                  model={model}
-                  onApply={(elements, relationships) => {
-                    commit((current) => ({
-                      ...current,
-                      elements: [...current.elements, ...elements],
-                      relationships: [...current.relationships, ...relationships],
-                    }));
-                    notify(`Added ${elements.length} enriched elements — remember to save`);
-                  }}
-                />
+                <Suspense fallback={<div className="placeholder">{t('loading')}</div>}>
+                  <Enrichment
+                    model={model}
+                    onApply={(elements, relationships) => {
+                      commit((current) => ({
+                        ...current,
+                        // Upsert by id instead of blind append — re-applying
+                        // an import twice must not duplicate ids.
+                        elements: upstreamById(current.elements, elements),
+                        relationships: upstreamById(current.relationships, relationships),
+                      }));
+                      notify(`Added ${elements.length} enriched elements — remember to save`);
+                    }}
+                    onApplyModel={(next) => {
+                      commit(() => next);
+                      notify('Applied IaC drift');
+                    }}
+                  />
+                </Suspense>
               ) : tab === 'artefacts' ? (
                 <Artefacts
                   model={model}
@@ -961,37 +2039,157 @@ export default function App() {
                   onSelectElement={(id) => { setSelectedElementId(id); setTab('editor'); }}
                 />
               ) : tab === 'ai' ? (
-                <AiPanel
-                  model={model}
-                  onReplaceModel={(next) => {
-                    commit(() => next);
-                    setSelectedElementId(null);
-                    setActiveViewIndex(0);
-                  }}
-                  onAddModel={async (next) => {
-                    const existing = await repository.listModels();
-                    const collision = existing.some((item) => item.id === next.id);
-                    const toSave = collision ? { ...next, id: `model-${crypto.randomUUID()}` } : next;
-                    await repository.saveModel(toSave);
-                    await refreshWorkspaces();
-                    await openWorkspace(toSave.id);
-                  }}
-                />
+                <Suspense fallback={<div className="placeholder">{t('loading')}</div>}>
+                  <AiPanel
+                    model={model}
+                    onReplaceModel={(next) => {
+                      commit(() => next);
+                      setSelectedElementId(null);
+                      setActiveViewIndex(0);
+                    }}
+                    onAddModel={async (next) => {
+                      const existing = await repository.listModels();
+                      const collision = existing.some((item) => item.id === next.id);
+                      const toSave = collision ? { ...next, id: `model-${crypto.randomUUID()}` } : next;
+                      await repository.saveModel(toSave);
+                      await refreshWorkspaces();
+                      await openWorkspace(toSave.id);
+                    }}
+                  />
+                </Suspense>
               ) : tab === 'settings' ? (
+                <>
+                {mode === 'server' && (
+                  <>
+                    <EmailSetup
+                      api={{
+                        get: async () => {
+                          const response = await fetch(`${apiUrl}/admin/mail`, { headers: { authorization: `Bearer ${getAccessToken() ?? ''}` } });
+                          if (!response.ok) throw new Error(`mail ${response.status}`);
+                          return (await response.json()) as never;
+                        },
+                        put: async (config) => {
+                          const response = await fetch(`${apiUrl}/admin/mail`, {
+                            method: 'PUT',
+                            headers: { 'content-type': 'application/json', authorization: `Bearer ${getAccessToken() ?? ''}` },
+                            body: JSON.stringify(config),
+                          });
+                          if (!response.ok) throw new Error(`mail ${response.status}`);
+                          return undefined;
+                        },
+                        test: async (to) => {
+                          const response = await fetch(`${apiUrl}/admin/mail/test`, {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json', authorization: `Bearer ${getAccessToken() ?? ''}` },
+                            body: JSON.stringify({ to }),
+                          });
+                          if (!response.ok) throw new Error((await response.json() as { error: string }).error);
+                          return (await response.json()) as never;
+                        },
+                      }}
+                    />
+                    <PeopleTokens
+                      api={{
+                        list: async () => {
+                          const response = await fetch(`${apiUrl}/admin/tokens`, { headers: { authorization: `Bearer ${getAccessToken() ?? ''}` } });
+                          if (!response.ok) throw new Error(`tokens ${response.status}`);
+                          return (await response.json()) as never;
+                        },
+                        mint: async (input) => {
+                          const response = await fetch(`${apiUrl}/admin/tokens`, {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json', authorization: `Bearer ${getAccessToken() ?? ''}` },
+                            body: JSON.stringify(input),
+                          });
+                          if (!response.ok) throw new Error(`mint ${response.status}`);
+                          return (await response.json()) as never;
+                        },
+                        revoke: async (id) => {
+                          const response = await fetch(`${apiUrl}/admin/tokens/${encodeURIComponent(id)}`, {
+                            method: 'DELETE',
+                            headers: { authorization: `Bearer ${getAccessToken() ?? ''}` },
+                          });
+                          if (!response.ok) throw new Error(`revoke ${response.status}`);
+                        },
+                      }}
+                    />
+                    <Invites
+                      workspaceId={model.id}
+                      api={{
+                        list: async (workspaceId) => {
+                          const response = await fetch(`${apiUrl}/models/${encodeURIComponent(workspaceId)}/invites`, { headers: { authorization: `Bearer ${getAccessToken() ?? ''}` } });
+                          if (!response.ok) throw new Error(`invites ${response.status}`);
+                          return (await response.json()) as never;
+                        },
+                        create: async (workspaceId, input) => {
+                          const response = await fetch(`${apiUrl}/models/${encodeURIComponent(workspaceId)}/invites`, {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json', authorization: `Bearer ${getAccessToken() ?? ''}` },
+                            body: JSON.stringify(input),
+                          });
+                          if (!response.ok) {
+                            const body = (await response.json()) as { error: string };
+                            throw new Error(body.error);
+                          }
+                          return (await response.json()) as never;
+                        },
+                        revoke: async (workspaceId, inviteId) => {
+                          const response = await fetch(`${apiUrl}/models/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(inviteId)}`, {
+                            method: 'DELETE',
+                            headers: { authorization: `Bearer ${getAccessToken() ?? ''}` },
+                          });
+                          if (!response.ok) throw new Error(`revoke ${response.status}`);
+                        },
+                      }}
+                    />
+                  </>
+                )}
                 <WorkspaceSettings
                   model={model}
+                  connectors={connectors}
+                  onConnectorsChange={setConnectors}
+                  membersManager={
+                    repository instanceof ServerRepository
+                      ? {
+                          load: () => repository.getMembers!(model.id),
+                          save: async (nextMembers, nextGroupRoles) => {
+                            await repository.saveMembers!(model.id, nextMembers, nextGroupRoles);
+                          },
+                        }
+                      : null
+                  }
+                  serverOrgId={null}
+                  onSetOrg={(orgId) => {
+                    if (repository.setOrg) {
+                      void repository.setOrg(model.id, orgId).then(
+                        () => notify(`Organisation set to ${orgId ?? '(none)'}`),
+                        (error) => notify(`Could not set organisation: ${error instanceof Error ? error.message : String(error)}`),
+                      );
+                    }
+                  }}
                   onUpdate={updateModelMeta}
                   onBack={goHome}
                   onDuplicate={() => duplicateWorkspace(model.id)}
                   onArchive={() => archiveWorkspace(model.id)}
                   onDelete={() => deleteWorkspace(model.id)}
                 />
-              ) : (
+              
+                </>
+) : (
                 <Collaborate
                   modelId={model.id}
+                  model={model}
                   repository={repository instanceof ServerRepository ? repository : null}
+                  onRestore={(restored) => {
+                    commit(() => restored);
+                    savedModelRef.current = restored;
+                    setDirty(false);
+                    void syncVersion(restored.id);
+                    notify('Snapshot restored');
+                  }}
                 />
               )}
+              </ErrorBoundary>
             </div>
 
             {model && (tab === 'editor' || tab === 'catalog' || tab === 'analysis') && (
@@ -1000,6 +2198,7 @@ export default function App() {
                 elements={model.elements}
                 relationships={model.relationships}
                 domains={model.domains ?? []}
+                connectors={connectors}
                 onSelect={setSelectedElementId}
                 onUpdate={updateElement}
               />
@@ -1014,7 +2213,55 @@ export default function App() {
             current={model}
             onReplace={() => void confirmImport('replace')}
             onAddAsNew={() => void confirmImport('add')}
+            onMerge={() => void confirmImport('merge')}
             onCancel={() => setPendingImport(null)}
+          />
+        )}
+
+        <CommandPalette
+          open={paletteOpen}
+          items={commands}
+          onClose={() => setPaletteOpen(false)}
+          onRun={(item) => item.run()}
+        />
+
+        {gitDialogOpen && (
+          <GitConfigDialog
+            onConnect={(config) => {
+              setGitConfig(config);
+              setGitDialogOpen(false);
+              setMode('git');
+              notify(`Connected to ${config.owner}/${config.repo}@${config.branch}`);
+            }}
+            onCancel={() => {
+              setGitDialogOpen(false);
+              if (mode === 'git' && !gitConfig) setMode('local');
+            }}
+          />
+        )}
+
+        {conflict && model && (
+          <ConflictReview
+            yours={model}
+            theirs={conflict.current ?? model}
+            onKeepMine={() => {
+              const version = conflict.currentVersion;
+              setConflict(null);
+              void save({ forceVersion: version });
+            }}
+            onTakeTheirs={() => {
+              setConflict(null);
+              void openWorkspace(model.id);
+            }}
+            onMerge={(merged) => {
+              // Semantic merge already resolved the content; save it against
+              // the server's current version, keeping our uncommitted review.
+              const version = conflict.currentVersion;
+              setConflict(null);
+              commit(() => merged);
+              void save({ forceVersion: version });
+            }}
+            onCancel={() => setConflict(null)}
           />
         )}
 

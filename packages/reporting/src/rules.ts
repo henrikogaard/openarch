@@ -1,10 +1,11 @@
 import {
+  applyWaivers,
   getElementType,
   getRelationshipType,
   isAllowedRelationship,
   primaryText,
 } from '@openarch/core';
-import type { ArchiElement, Model, ValidationIssue } from '@openarch/core';
+import type { ArchiElement, Model, ValidationIssue, Waiver } from '@openarch/core';
 
 export type RuleType =
   | 'element-missing-property'
@@ -379,6 +380,7 @@ function checkMaxElements(
 export function checkRules(
   model: Model,
   rules: RuleDefinition[] = DEFAULT_RULES,
+  waivers: Waiver[] = model.waivers ?? [],
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   for (const rule of rules) {
@@ -409,7 +411,7 @@ export function checkRules(
         break;
     }
   }
-  return issues;
+  return applyWaivers(issues, waivers);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

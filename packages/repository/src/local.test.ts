@@ -3,6 +3,7 @@ import { createSampleModel } from '@openarch/core';
 import { describe, expect, it } from 'vitest';
 import {
   LocalRepository,
+  NATIVE_SCHEMA_VERSION,
   parseNativeModel,
   serializeNativeModel,
 } from './local';
@@ -21,6 +22,25 @@ describe('LocalRepository', () => {
 
     await repository.deleteModel(model.id);
     expect(await repository.listModels()).toEqual([]);
+  });
+});
+
+describe('native schema migration', () => {
+  it('stamps schemaVersion on serialize and migrates v0 files on parse', () => {
+    const model = createSampleModel();
+    const serialized = serializeNativeModel(model);
+    expect(JSON.parse(serialized).schemaVersion).toBe(NATIVE_SCHEMA_VERSION);
+
+    // A v0 file (no schemaVersion) parses and is stamped v1.
+    const legacy = JSON.parse(serialized);
+    delete legacy.schemaVersion;
+    const migrated = parseNativeModel(JSON.stringify(legacy));
+    expect(migrated.schemaVersion).toBe(1);
+    expect(migrated.elements.length).toBe(model.elements.length);
+
+    // Newer schemas are rejected, not silently misread.
+    const future = { ...JSON.parse(serialized), schemaVersion: 99 };
+    expect(() => parseNativeModel(JSON.stringify(future))).toThrow(/newer than this app supports/);
   });
 });
 

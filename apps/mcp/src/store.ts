@@ -113,11 +113,26 @@ export class HttpModelStore implements ModelStore {
   }
 
   async saveModel(model: Model): Promise<void> {
+    // Optimistic locking: fetch the current version first and send If-Match.
+    // A blind last-writer-wins PUT silently reverts concurrent human edits
+    // (the web app autosaves on a timer, so this is a realistic collision).
+    let expectedVersion: number | undefined;
+    try {
+      const meta = await this.request<{ version: number }>(
+        `/models/${encodeURIComponent(model.id)}/meta`,
+      );
+      expectedVersion = meta?.version;
+    } catch {
+      expectedVersion = undefined; // may not exist yet — POST path below
+    }
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/models/${encodeURIComponent(model.id)}`, {
         method: 'PUT',
-        headers: this.headers({ 'content-type': 'application/json' }),
+        headers: this.headers({
+          'content-type': 'application/json',
+          ...(expectedVersion !== undefined ? { 'if-match': String(expectedVersion) } : {}),
+        }),
         body: JSON.stringify(model),
       });
     } catch (error) {

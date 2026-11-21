@@ -1,5 +1,14 @@
 node_modules
-**/dist
+dist
 data
 .git
+.claude
+.github
 *.log
+.env
+.env.*
+!.env.example
+test-results
+playwright-report
+coverage
+.DS_Store

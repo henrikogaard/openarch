@@ -1,5 +1,6 @@
 import { getElementType, primaryText, type ArchiElement } from '@openarch/core';
 import { useState } from 'react';
+import { useTranslation } from '../i18n';
 
 interface CatalogProps {
   elements: ArchiElement[];
@@ -8,6 +9,7 @@ interface CatalogProps {
 }
 
 export default function Catalog({ elements, selectedElementId, onSelect }: CatalogProps) {
+  const t = useTranslation();
   const [query, setQuery] = useState('');
   const filtered = elements.filter((element) =>
     `${primaryText(element.name)} ${element.type}`.toLowerCase().includes(query.toLowerCase()),

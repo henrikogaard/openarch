@@ -1,10 +1,14 @@
 import { getElementType } from './metamodel';
 import type {
+  ArchiElement,
   Artefact,
   ArtefactKind,
+  Bounds,
   Domain,
   Model,
   ModelSummary,
+  Point,
+  ViewNode,
   WorkspaceStatus,
 } from './types';
 import { primaryText } from './types';
@@ -85,6 +89,469 @@ export function filterModelByDomain(model: Model, domainId: string | 'all'): Mod
     return { ...view, nodes, edges };
   });
   return { ...model, elements, relationships, views };
+}
+
+/** Resolve view node ids to the elements they show (containers resolve to their Grouping element). */
+export function elementRefsForNodes(model: Model, nodeIds: string[]): string[] {
+  const ids = new Set(nodeIds);
+  const refs = new Set<string>();
+  for (const view of model.views) {
+    for (const node of view.nodes) {
+      if (!ids.has(node.id)) continue;
+      if (node.elementRef) refs.add(node.elementRef);
+      if (node.groupingElementId) refs.add(node.groupingElementId);
+    }
+  }
+  return [...refs];
+}
+
+/** Resolve view edge ids to the relationships they show. */
+export function relationshipRefsForEdges(model: Model, edgeIds: string[]): string[] {
+  const ids = new Set(edgeIds);
+  const refs = new Set<string>();
+  for (const view of model.views) {
+    for (const edge of view.edges) {
+      if (ids.has(edge.id)) refs.add(edge.relationshipRef);
+    }
+  }
+  return [...refs];
+}
+
+/**
+ * Delete elements from the canonical model: the elements themselves, every
+ * relationship that touches them, all view nodes/edges that referenced them,
+ * and artefact links to them. Keeps validation free of dangling references.
+ */
+export function removeElements(model: Model, elementIds: string[]): Model {
+  const ids = new Set(elementIds);
+  if (model.elements.some((element) => ids.has(element.id))) {
+    // fallthrough to the removal below
+  } else if (!model.views.some((view) => view.nodes.some((node) => node.id && ids.has(node.id)))) {
+    return model;
+  }
+  const elements = model.elements.filter((element) => !ids.has(element.id));
+  const relationships = model.relationships.filter(
+    (relationship) => !ids.has(relationship.source) && !ids.has(relationship.target),
+  );
+  const relationshipIds = new Set(relationships.map((relationship) => relationship.id));
+  const views = model.views.map((view) => {
+    const remaining = view.nodes.filter(
+      (node) =>
+        (!node.elementRef || !ids.has(node.elementRef)) &&
+        (!node.groupingElementId || !ids.has(node.groupingElementId)) &&
+        !ids.has(node.id),
+    );
+    const removedNodeIds = new Set(
+      view.nodes.filter((node) => !remaining.includes(node)).map((node) => node.id),
+    );
+    // Surviving children of a removed container are promoted to roots —
+    // bounds are already absolute in the model, so only the link is dropped.
+    const nodes = remaining.map((node) =>
+      node.parentId && removedNodeIds.has(node.parentId) ? { ...node, parentId: undefined } : node,
+    );
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = view.edges.filter(
+      (edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target) && relationshipIds.has(edge.relationshipRef),
+    );
+    return { ...view, nodes, edges };
+  });
+  const artefacts = (model.artefacts ?? []).map((artefact) => ({
+    ...artefact,
+    elementIds: artefact.elementIds.filter((id) => !ids.has(id)),
+  }));
+  return { ...model, elements, relationships, views, artefacts };
+}
+
+/** Delete relationships and every view edge that showed them. */
+export function removeRelationships(model: Model, relationshipIds: string[]): Model {
+  const ids = new Set(relationshipIds);
+  if (!model.relationships.some((relationship) => ids.has(relationship.id))) return model;
+  const relationships = model.relationships.filter((relationship) => !ids.has(relationship.id));
+  const views = model.views.map((view) => ({
+    ...view,
+    edges: view.edges.filter((edge) => !ids.has(edge.relationshipRef)),
+  }));
+  return { ...model, relationships, views };
+}
+
+/** Bulk-assign a patch (e.g. domain/environment) to many elements at once. */
+export function assignElements(
+  model: Model,
+  elementIds: string[],
+  patch: Partial<Pick<ArchiElement, 'domain' | 'environment'>>,
+): Model {
+  const ids = new Set(elementIds);
+  if (!model.elements.some((element) => ids.has(element.id))) return model;
+  return {
+    ...model,
+    elements: model.elements.map((element) => (ids.has(element.id) ? { ...element, ...patch } : element)),
+  };
+}
+
+/**
+ * Duplicate a set of elements as a subgraph: the elements, the relationships
+ * whose endpoints are both in the set, and their nodes/edges in the given view
+ * (shifted by `offset`). New ids throughout; the input model is untouched.
+ */
+export function duplicateElements(
+  model: Model,
+  elementIds: string[],
+  viewId: string,
+  offset: Point = { x: 40, y: 40 },
+): Model {
+  const ids = new Set(elementIds);
+  const selected = model.elements.filter((element) => ids.has(element.id));
+  if (!selected.length) return model;
+
+  const elementIdMap = new Map(selected.map((element) => [element.id, `el-${crypto.randomUUID()}`]));
+  const newElements: ArchiElement[] = selected.map((element) => {
+    const { raw: _raw, ...rest } = element;
+    void _raw;
+    return {
+      ...rest,
+      id: elementIdMap.get(element.id)!,
+      // Append the copy marker to English/primary names only — other locales
+      // keep their native spelling.
+      name: element.name.map((text) =>
+        element.name.length === 1 || text.lang === 'en'
+          ? { ...text, value: `${text.value} (copy)` }
+          : { ...text },
+      ),
+      properties: element.properties.map((property) => ({ ...property })),
+    };
+  });
+
+  const relationshipIdMap = new Map<string, string>();
+  const newRelationships = model.relationships
+    .filter((relationship) => ids.has(relationship.source) && ids.has(relationship.target))
+    .map((relationship) => {
+      const id = `rel-${crypto.randomUUID()}`;
+      relationshipIdMap.set(relationship.id, id);
+      return {
+        ...relationship,
+        id,
+        source: elementIdMap.get(relationship.source)!,
+        target: elementIdMap.get(relationship.target)!,
+        name: relationship.name.map((text) => ({ ...text })),
+        properties: relationship.properties.map((property) => ({ ...property })),
+      };
+    });
+
+  const views = model.views.map((view) => {
+    if (view.id !== viewId) return view;
+    const nodeIdMap = new Map<string, string>();
+    const addedNodes = view.nodes
+      .filter((node) => node.elementRef && ids.has(node.elementRef))
+      .map((node) => {
+        const id = `node-${crypto.randomUUID()}`;
+        nodeIdMap.set(node.id, id);
+        const { raw: _nodeRaw, ...rest } = node;
+        void _nodeRaw;
+        return {
+          ...rest,
+          id,
+          elementRef: elementIdMap.get(node.elementRef!)!,
+          label: node.label.map((text) => ({ ...text })),
+          bounds: {
+            x: node.bounds.x + offset.x,
+            y: node.bounds.y + offset.y,
+            w: node.bounds.w,
+            h: node.bounds.h,
+          },
+        };
+      });
+    const addedEdges = view.edges
+      .filter((edge) => nodeIdMap.has(edge.source) && nodeIdMap.has(edge.target))
+      .map((edge) => {
+        const { raw: _edgeRaw, ...rest } = edge;
+        void _edgeRaw;
+        return {
+          ...rest,
+          id: `edge-${crypto.randomUUID()}`,
+          relationshipRef: relationshipIdMap.get(edge.relationshipRef)!,
+          source: nodeIdMap.get(edge.source)!,
+          target: nodeIdMap.get(edge.target)!,
+          bendpoints: edge.bendpoints.map((point) => ({ ...point })),
+        };
+      });
+    return { ...view, nodes: [...view.nodes, ...addedNodes], edges: [...view.edges, ...addedEdges] };
+  });
+
+  return {
+    ...model,
+    elements: [...model.elements, ...newElements],
+    relationships: [...model.relationships, ...newRelationships],
+    views,
+  };
+}
+
+export type NodeAlignment = 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom';
+
+/**
+ * Align the given nodes of one view to a common edge or center line.
+ * No-op (same reference) when fewer than two nodes are selected.
+ */
+export function alignNodes(model: Model, viewId: string, nodeIds: string[], alignment: NodeAlignment): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view) return model;
+  const targets = view.nodes.filter((node) => ids.has(node.id));
+  if (targets.length < 2) return model;
+
+  const aligned = new Set(targets.map((node) => node.id));
+  const nodes = view.nodes.map((node) => {
+    if (!aligned.has(node.id)) return node;
+    const { bounds } = node;
+    let next: Bounds;
+    switch (alignment) {
+      case 'left':
+        next = { ...bounds, x: Math.min(...targets.map((n) => n.bounds.x)) };
+        break;
+      case 'right':
+        next = { ...bounds, x: Math.max(...targets.map((n) => n.bounds.x + n.bounds.w)) - bounds.w };
+        break;
+      case 'center-x': {
+        const center =
+          targets.reduce((sum, n) => sum + n.bounds.x + n.bounds.w / 2, 0) / targets.length;
+        next = { ...bounds, x: Math.round(center - bounds.w / 2) };
+        break;
+      }
+      case 'top':
+        next = { ...bounds, y: Math.min(...targets.map((n) => n.bounds.y)) };
+        break;
+      case 'bottom':
+        next = { ...bounds, y: Math.max(...targets.map((n) => n.bounds.y + n.bounds.h)) - bounds.h };
+        break;
+      case 'center-y': {
+        const middle =
+          targets.reduce((sum, n) => sum + n.bounds.y + n.bounds.h / 2, 0) / targets.length;
+        next = { ...bounds, y: Math.round(middle - bounds.h / 2) };
+        break;
+      }
+    }
+    return { ...node, bounds: next };
+  });
+  return { ...model, views: model.views.map((v) => (v.id === viewId ? { ...v, nodes } : v)) };
+}
+
+/**
+ * Distribute the given nodes of one view evenly along an axis, keeping the two
+ * extremes fixed. No-op (same reference) with fewer than three nodes.
+ */
+export function distributeNodes(model: Model, viewId: string, nodeIds: string[], axis: 'x' | 'y'): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view) return model;
+  const sorted = view.nodes
+    .filter((node) => ids.has(node.id))
+    .sort((a, b) => (axis === 'x' ? a.bounds.x - b.bounds.x : a.bounds.y - b.bounds.y));
+  if (sorted.length < 3) return model;
+
+  const position = (node: ViewNode) => (axis === 'x' ? node.bounds.x : node.bounds.y);
+  const min = position(sorted[0]);
+  const max = position(sorted[sorted.length - 1]);
+  const aligned = new Map<string, number>();
+  sorted.forEach((node, index) => {
+    aligned.set(node.id, Math.round(min + ((max - min) * index) / (sorted.length - 1)));
+  });
+  const nodes = view.nodes.map((node) => {
+    if (!aligned.has(node.id)) return node;
+    const value = aligned.get(node.id)!;
+    return { ...node, bounds: { ...node.bounds, ...(axis === 'x' ? { x: value } : { y: value }) } };
+  });
+  return { ...model, views: model.views.map((v) => (v.id === viewId ? { ...v, nodes } : v)) };
+}
+
+/** Reconnect a relationship to new endpoint elements and update its view edges. */
+export function reconnectRelationship(
+  model: Model,
+  relationshipId: string,
+  sourceElementId: string,
+  targetElementId: string,
+): Model {
+  if (sourceElementId === targetElementId) return model;
+  const relationship = model.relationships.find((candidate) => candidate.id === relationshipId);
+  if (!relationship) return model;
+  const relationships = model.relationships.map((candidate) =>
+    candidate.id === relationshipId
+      ? { ...candidate, source: sourceElementId, target: targetElementId }
+      : candidate,
+  );
+  // Views are projections of the canonical model: an edge that can no longer
+  // depict the relationship's endpoints faithfully in a view is REMOVED
+  // from that view (elsewhere it keeps lying about what it shows), rather
+  // than silently keeping its old endpoints.
+  const views = model.views.map((view) => {
+    const sourceNodeId = view.nodes.find((node) => node.elementRef === sourceElementId)?.id;
+    const targetNodeId = view.nodes.find((node) => node.elementRef === targetElementId)?.id;
+    return {
+      ...view,
+      edges: view.edges.flatMap((edge) => {
+        if (edge.relationshipRef !== relationshipId) return [edge];
+        if (!sourceNodeId || !targetNodeId) return [];
+        return [{ ...edge, source: sourceNodeId, target: targetNodeId }];
+      }),
+    };
+  });
+  return { ...model, relationships, views };
+}
+
+/** Move nodes to the front or back of the view's stacking order. */
+export function setNodeZOrder(model: Model, viewId: string, nodeIds: string[], position: 'front' | 'back'): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view || !view.nodes.some((node) => ids.has(node.id))) return model;
+  const others = view.nodes.filter((node) => !ids.has(node.id));
+  const max = Math.max(0, ...others.map((node) => node.zIndex ?? 0));
+  const min = Math.min(0, ...others.map((node) => node.zIndex ?? 0));
+  const nodes = view.nodes.map((node) =>
+    ids.has(node.id) ? { ...node, zIndex: position === 'front' ? max + 1 : min - 1 } : node,
+  );
+  return { ...model, views: model.views.map((candidate) => (candidate.id === viewId ? { ...candidate, nodes } : candidate)) };
+}
+
+/**
+ * Group the given nodes of one view under a new Group element: the group node
+ * is inserted first (React Flow requires parents before children) with bounds
+ * enclosing the members, and members get `parentId`.
+ */
+export function groupNodes(model: Model, viewId: string, nodeIds: string[]): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view) return model;
+  const members = view.nodes.filter((node) => ids.has(node.id) && !node.parentId);
+  if (members.length < 2) return model;
+
+  const minX = Math.min(...members.map((node) => node.bounds.x));
+  const minY = Math.min(...members.map((node) => node.bounds.y));
+  const maxX = Math.max(...members.map((node) => node.bounds.x + node.bounds.w));
+  const maxY = Math.max(...members.map((node) => node.bounds.y + node.bounds.h));
+  const groupElementId = `el-${crypto.randomUUID()}`;
+  const groupNodeId = `node-${crypto.randomUUID()}`;
+  const groupElement: ArchiElement = {
+    id: groupElementId,
+    type: 'Grouping',
+    name: [{ lang: 'en', value: 'Group' }],
+    documentation: [],
+    properties: [],
+  };
+  const groupNode: ViewNode = {
+    id: groupNodeId,
+    // AOEF containers cannot carry elementRef — the Grouping element is
+    // linked natively via groupingElementId instead.
+    type: 'Container',
+    groupingElementId: groupElementId,
+    label: [{ lang: 'en', value: 'Group' }],
+    bounds: { x: minX - 20, y: minY - 20, w: maxX - minX + 40, h: maxY - minY + 40 },
+  };
+  const nodes = [
+    groupNode,
+    ...view.nodes.map((node) => (ids.has(node.id) ? { ...node, parentId: groupNodeId } : node)),
+  ];
+  return {
+    ...model,
+    elements: [...model.elements, groupElement],
+    views: model.views.map((candidate) => (candidate.id === viewId ? { ...candidate, nodes } : candidate)),
+  };
+}
+
+/** Remove the given nodes from their parent container; drop the group if it becomes empty. */
+export function ungroupNodes(model: Model, viewId: string, nodeIds: string[]): Model {
+  const ids = new Set(nodeIds);
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view) return model;
+  const parents = new Set(
+    view.nodes.filter((node) => ids.has(node.id) && node.parentId).map((node) => node.parentId!),
+  );
+  if (!parents.size) return model;
+  let nodes = view.nodes.map((node) => (ids.has(node.id) ? { ...node, parentId: undefined } : node));
+  const orphanedGroups = [...parents].filter(
+    (parentId) => !nodes.some((node) => node.parentId === parentId),
+  );
+  const orphanedGroupIds = new Set(orphanedGroups);
+  const orphanedElementRefs = new Set(
+    nodes
+      .filter((node) => orphanedGroupIds.has(node.id))
+      .map((node) => node.elementRef ?? node.groupingElementId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  nodes = nodes.filter((node) => !orphanedGroupIds.has(node.id));
+  const elements = model.elements.filter((element) => !orphanedElementRefs.has(element.id));
+  const removedRelationshipIds = new Set(
+    model.relationships
+      .filter(
+        (relationship) =>
+          orphanedElementRefs.has(relationship.source) || orphanedElementRefs.has(relationship.target),
+      )
+      .map((relationship) => relationship.id),
+  );
+  const relationships = model.relationships.filter((relationship) => !removedRelationshipIds.has(relationship.id));
+  // Prune edges that referenced removed relationships or attached to the
+  // removed group nodes — in every view, not just the one being ungrouped.
+  const prunedViews = model.views.map((candidate) => ({
+    ...candidate,
+    nodes: candidate.id === viewId ? nodes : candidate.nodes,
+    edges: candidate.edges.filter(
+      (edge) =>
+        !orphanedGroupIds.has(edge.source) &&
+        !orphanedGroupIds.has(edge.target) &&
+        !removedRelationshipIds.has(edge.relationshipRef),
+    ),
+  }));
+  return {
+    ...model,
+    elements,
+    relationships,
+    views: prunedViews,
+  };
+}
+
+/** Replace the bendpoints of one view edge. */
+export function setEdgeBendpoints(model: Model, viewId: string, edgeId: string, bendpoints: Point[]): Model {
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  if (!view || !view.edges.some((edge) => edge.id === edgeId)) return model;
+  const edges = view.edges.map((edge) => (edge.id === edgeId ? { ...edge, bendpoints } : edge));
+  return { ...model, views: model.views.map((candidate) => (candidate.id === viewId ? { ...candidate, edges } : candidate)) };
+}
+
+/**
+ * Insert a bendpoint into a view edge at the segment closest to `point`
+ * (measured against the polyline source → bendpoints → target).
+ */
+export function addEdgeBendpoint(model: Model, viewId: string, edgeId: string, point: Point): Model {
+  const view = model.views.find((candidate) => candidate.id === viewId);
+  const edge = view?.edges.find((candidate) => candidate.id === edgeId);
+  if (!view || !edge) return model;
+  const sourceNode = view.nodes.find((node) => node.id === edge.source);
+  const targetNode = view.nodes.find((node) => node.id === edge.target);
+  if (!sourceNode || !targetNode) return model;
+  const corners = [
+    { x: sourceNode.bounds.x + sourceNode.bounds.w, y: sourceNode.bounds.y + sourceNode.bounds.h / 2 },
+    ...edge.bendpoints,
+    { x: targetNode.bounds.x, y: targetNode.bounds.y + targetNode.bounds.h / 2 },
+  ];
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  for (let i = 0; i < corners.length - 1; i += 1) {
+    const distance = segmentDistance(corners[i], corners[i + 1], point);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i + 1;
+    }
+  }
+  const bendpoints = [...edge.bendpoints];
+  bendpoints.splice(bestIndex, 0, { x: Math.round(point.x), y: Math.round(point.y) });
+  return setEdgeBendpoints(model, viewId, edgeId, bendpoints);
+}
+
+function segmentDistance(a: Point, b: Point, p: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq));
+  const cx = a.x + t * dx;
+  const cy = a.y + t * dy;
+  return Math.hypot(p.x - cx, p.y - cy);
 }
 
 export interface DomainStat {

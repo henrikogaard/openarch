@@ -1,3 +1,4 @@
+export * from './drawio';
 export * from './types';
 export * from './csv';
 export * from './files';

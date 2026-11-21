@@ -1,24 +1,7 @@
 {
-  "name": "openarch",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Open-source, browser-based ArchiMate® modeling platform",
-  "license": "MIT",
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
-  "scripts": {
-    "dev": "npm run dev -w @openarch/web",
-    "dev:server": "npm run dev -w @openarch/server",
-    "cli": "tsx apps/cli/src/index.ts",
-    "mcp": "tsx apps/mcp/src/index.ts",
-    "build": "npm run build -w @openarch/web && npm run build -w @openarch/server",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
+  "description": "Open-source, browser-based ArchiMate\u00ae modeling platform",
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^22.10.0",
@@ -31,5 +14,30 @@
     "vite": "^6.0.0",
     "vite-tsconfig-paths": "^5.1.0",
     "vitest": "^5.1.0"
-  }
+  },
+  "license": "MIT",
+  "name": "openarch",
+  "overrides": {
+    "image-size": "2.0.4"
+  },
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev -w @openarch/web",
+    "dev:server": "npm run dev -w @openarch/server",
+    "cli": "tsx apps/cli/src/index.ts",
+    "mcp": "tsx apps/mcp/src/index.ts",
+    "build": "npm run build -w @openarch/web && npm run build -w @openarch/server",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "cli:bundle": "node scripts/bundle-cli.mjs",
+    "cli:pack": "node scripts/bundle-cli.mjs && cd packages/cli && npm pack --pack-destination ../../tmp-pack",
+    "docs:build": "node scripts/build-docs.mjs"
+  },
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ]
 }

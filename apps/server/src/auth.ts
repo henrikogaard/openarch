@@ -1,10 +1,12 @@
-import { createHmac, createPublicKey, timingSafeEqual, verify, type KeyObject } from 'node:crypto';
+import { createHash, createHmac, createPublicKey, timingSafeEqual, verify, type KeyObject } from 'node:crypto';
 import type { WorkspaceMember, WorkspaceRole } from '@openarch/core';
 
 export interface Actor {
   subject: string;
   displayName?: string;
   authenticated: boolean;
+  /** Security-group claims (e.g. OIDC `groups`), used for group→role mapping. */
+  groups?: string[];
 }
 
 interface StaticToken {
@@ -23,6 +25,8 @@ export interface AuthConfig {
   oidcAudience?: string;
   /** Optional explicit JWKS URL; otherwise discovered from the issuer. */
   oidcJwksUrl?: string;
+  /** SHA-256 of the first-boot owner token (data/config.json auth.bootstrapTokenHash). */
+  bootstrapTokenHash?: string;
 }
 
 export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
@@ -45,6 +49,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     // Bootstrap: when static tokens are configured, the first one owns seeded workspaces.
     adminSubject: env.OPENARCH_ADMIN ?? [...staticTokens.values()][0]?.subject ?? 'system',
     oidcIssuer: env.OPENARCH_OIDC_ISSUER,
+    bootstrapTokenHash: env.OPENARCH_BOOTSTRAP_TOKEN_HASH || undefined,
     oidcAudience: env.OPENARCH_OIDC_AUDIENCE,
     oidcJwksUrl: env.OPENARCH_OIDC_JWKS_URL,
   };
@@ -120,6 +125,7 @@ function verifyRs256(
   try {
     const payload = JSON.parse(base64UrlDecode(payloadPart)) as Record<string, unknown>;
     if (typeof payload.exp === 'number' && payload.exp * 1000 < now) return undefined;
+    if (typeof payload.nbf === 'number' && payload.nbf * 1000 > now) return undefined;
     if (config.oidcAudience) {
       const audience = payload.aud;
       const audiences = Array.isArray(audience) ? audience : [audience];
@@ -161,6 +167,7 @@ export function verifyJwt(
   try {
     const payload = JSON.parse(base64UrlDecode(payloadPart)) as Record<string, unknown>;
     if (typeof payload.exp === 'number' && payload.exp * 1000 < now) return undefined;
+    if (typeof payload.nbf === 'number' && payload.nbf * 1000 > now) return undefined;
     return payload;
   } catch {
     return undefined;
@@ -179,6 +186,15 @@ export function resolveActor(
     if (staticEntry) {
       return { subject: staticEntry.subject, displayName: staticEntry.displayName, authenticated: true };
     }
+    if (config.bootstrapTokenHash) {
+      const digest = createHash('sha256').update(token).digest('hex');
+      const expected = config.bootstrapTokenHash.replace(/^sha256:/, '');
+      const a = Buffer.from(digest);
+      const b = Buffer.from(expected);
+      if (a.length === b.length && timingSafeEqual(a, b)) {
+        return { subject: config.adminSubject, displayName: 'Owner (bootstrap)', authenticated: true };
+      }
+    }
     if (config.jwtSecret) {
       const payload = verifyJwt(token, config.jwtSecret);
       if (payload) {
@@ -188,6 +204,7 @@ export function resolveActor(
             subject,
             displayName: typeof payload.name === 'string' ? payload.name : subject,
             authenticated: true,
+            groups: groupsOf(payload),
           };
         }
       }
@@ -200,6 +217,7 @@ export function resolveActor(
           subject,
           displayName: typeof oidcPayload.name === 'string' ? oidcPayload.name : subject,
           authenticated: true,
+          groups: groupsOf(oidcPayload),
         };
       }
     }
@@ -213,16 +231,34 @@ export function resolveActor(
   return null;
 }
 
+/** Extract string group claims (`groups`, or a single `group`) from a token payload. */
+function groupsOf(payload: Record<string, unknown>): string[] | undefined {
+  const groups = payload.groups ?? payload.group;
+  if (Array.isArray(groups)) {
+    const names = groups.filter((group): group is string => typeof group === 'string');
+    return names.length ? names : undefined;
+  }
+  if (typeof groups === 'string') return [groups];
+  return undefined;
+}
+
 /** Effective role for an actor in a workspace. Auth-disabled deployments remain fully open. */
 export function roleFor(
   members: WorkspaceMember[] | undefined,
   actor: Actor,
   config: AuthConfig = authConfig,
+  groupRoles?: { group: string; role: WorkspaceRole }[],
 ): WorkspaceRole {
   if (!config.required) return 'owner';
   if (actor.subject === config.adminSubject) return 'owner';
+  // Explicit membership wins; then group→role mapping (first match wins);
+  // otherwise the default is read-only.
   const member = members?.find((item) => item.subject === actor.subject);
-  return member?.role ?? 'viewer';
+  if (member) return member.role;
+  for (const mapping of groupRoles ?? []) {
+    if (actor.groups?.includes(mapping.group)) return mapping.role;
+  }
+  return 'viewer';
 }
 
 export function hasRole(role: WorkspaceRole, allowed: WorkspaceRole[]): boolean {
@@ -237,10 +273,16 @@ export function isMember(
   members: WorkspaceMember[] | undefined,
   actor: Actor,
   config: AuthConfig = authConfig,
+  groupRoles?: { group: string; role: WorkspaceRole }[],
 ): boolean {
   if (!config.required) return true;
   if (actor.subject === config.adminSubject) return true;
-  return Boolean(members?.some((member) => member.subject === actor.subject));
+  // Explicit membership OR a group→role mapping counts as access.
+  if (members?.some((member) => member.subject === actor.subject)) return true;
+  if (actor.groups?.length && groupRoles?.some((mapping) => actor.groups!.includes(mapping.group))) {
+    return true;
+  }
+  return false;
 }
 
 export function initialMembers(actor: Actor): WorkspaceMember[] {

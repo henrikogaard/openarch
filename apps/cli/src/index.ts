@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import {
+  diffModels as canonicalDiffModels,
+  diffSummary,
   type Model,
   parseAoef,
   primaryText,
@@ -10,10 +12,15 @@ import {
 import { parseNativeModel, serializeNativeModel } from '@openarch/repository';
 import { exportElementsCsv, exportMermaid } from '@openarch/exporters';
 import { exportArchi, importArchi } from '@openarch/archi';
+import { c4ToModel, modelToC4, parseStructurizr } from '@openarch/c4';
 import { checkRules, exportWorkspaceMarkdown, parseRules } from '@openarch/reporting';
-import { diffModels } from './diff';
+import { publish } from './publish';
+import { backupData, restoreBackup, verifyStore, type BackupOptions, type RestoreOptions } from './backup';
+// Reuse the single canonical diff implementation (core) — a private CLI
+// duplicate drifted from the server/web semantics.
 
-type Format = 'xml' | 'json' | 'csv' | 'mermaid';
+
+type Format = 'xml' | 'json' | 'csv' | 'mermaid' | 'dsl' | 'drawio';
 
 const HELP = `OpenArch CLI — manage ArchiMate® models
 
@@ -27,6 +34,14 @@ Commands:
   diff <a> <b>               Compare two model files
   check <file> [rules.json]  Run architecture rules; exit 1 on errors
   report <file> <output.md>  Write a Markdown workspace report
+  script <model> <file.js> [out]  Run a sandboxed script against a model (must return the model)
+  iac diff <model> <iac-file> [--fail-on drift]  Report IaC drift (CI gate with --fail-on)
+  publish-confluence <model> --url URL --space KEY --email E --token T [--title "..."]
+                                                 Publish a workspace report to Confluence (cron for scheduled publishing)
+  admin backup [dataDir] [--include-secrets] [--anonymise]  Backup the server data directory (zip + sha256 manifest)
+  admin restore <archive.zip> <dataDir> [--workspace <id>] [--at <seq>] [--dry-run]
+                                                 Restore a backup (verifies checksums; --at lands with Track C)
+  admin verify-store [dataDir]                   Boot-check the store (parse + shape + per-workspace checks)
   doctor                     Print environment and capability information
   --help                     Show this help
 
@@ -58,18 +73,23 @@ function formatFromPath(filePath: string): Format {
     case '.mermaid':
     case '.mmd':
       return 'mermaid';
+    case '.dsl':
+    case '.structurizr':
+      return 'dsl';
+    case '.drawio':
+      return 'drawio';
     default:
       throw new Error(
         `Unsupported file extension "${extension || '(none)'}" for "${filePath}". ` +
-          'Expected one of .xml, .json, .csv or .mermaid.',
+          'Expected one of .xml, .json, .csv, .mermaid, .dsl, .drawio or .archimate.',
       );
   }
 }
 
 function describeFile(filePath: string): string {
   const format = formatFromPath(filePath);
-  if (format !== 'xml' && format !== 'json') {
-    throw new Error(`Cannot read "${filePath}" as a model: expected a .xml or .json file.`);
+  if (format !== 'xml' && format !== 'json' && format !== 'dsl') {
+    throw new Error(`Cannot read "${filePath}" as a model: expected a .xml, .json, .dsl or .drawio file.`);
   }
   return format;
 }
@@ -83,15 +103,25 @@ async function readModelFile(filePath: string): Promise<Model> {
       throw new Error(`Could not read "${filePath}" as an Archi model: ${errorMessage(error)}`);
     }
   }
+  if (filePath.toLowerCase().endsWith('.drawio')) {
+    const { importDrawIo } = await import('@openarch/enrichment');
+    const result = importDrawIo(await readFile(filePath, 'utf8'));
+    if (result.warnings.length) {
+      console.log(`draw.io import skipped ${result.warnings.length} unsound part(s)`);
+    }
+    return result.model;
+  }
   const format = describeFile(filePath);
-  let text: string;
+  let modelText: string;
   try {
-    text = await readFile(filePath, 'utf8');
+    modelText = await readFile(filePath, 'utf8');
   } catch (error) {
     throw new Error(`Could not read "${filePath}": ${errorMessage(error)}`);
   }
   try {
-    return format === 'xml' ? parseAoef(text) : parseNativeModel(text);
+    if (format === 'dsl') return c4ToModel(parseStructurizr(modelText));
+    if (format === 'xml') return parseAoef(modelText);
+    return parseNativeModel(modelText);
   } catch (error) {
     throw new Error(`Could not parse "${filePath}" as ${format.toUpperCase()}: ${errorMessage(error)}`);
   }
@@ -105,6 +135,10 @@ function serializeModel(model: Model, format: Format): string {
       return serializeNativeModel(model);
     case 'csv':
       return exportElementsCsv(model);
+    case 'dsl':
+      return modelToC4(model);
+    case 'drawio':
+      throw new Error('Serializing to draw.io is not supported (import only).');
     case 'mermaid': {
       const view = model.views[0];
       if (!view) {
@@ -210,6 +244,20 @@ async function convert(input: string, output: string): Promise<number> {
   return 0;
 }
 
+async function script(modelPath: string, scriptPath: string, outputPath?: string): Promise<number> {
+  const model = await readModelFile(modelPath);
+  const code = await readFile(scriptPath, 'utf8');
+  const { runModelScript } = await import('@openarch/core');
+  const result = runModelScript(model, code);
+  for (const line of result.logs) console.log(`[script] ${line}`);
+  const text = serializeModel(result.model, 'json');
+  const target = outputPath ?? modelPath;
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, text, 'utf8');
+  console.log(`Script applied: ${result.model.elements.length} elements, ${result.issues.length} non-error finding(s) -> ${target}`);
+  return 0;
+}
+
 async function check(filePath: string, rulesPath?: string): Promise<number> {
   const model = await readModelFile(filePath);
   const rules = rulesPath ? parseRules(await readFile(rulesPath, 'utf8')) : undefined;
@@ -247,9 +295,45 @@ async function report(filePath: string, output: string): Promise<number> {
   return 0;
 }
 
+
+/**
+ * `openarch iac diff <model> <iac file> [--fail-on drift]` — re-import the IaC
+ * source against the stored model and report drift; exits 1 when drift exists
+ * and --fail-on drift is given (intended as a CI gate).
+ */
+async function iacDiff(modelPath: string, sourcePath: string, failOn?: string): Promise<number> {
+  const { parseTerraformPlan, mapResources, diffIacImport } = await import('@openarch/iac');
+  const model = await readModelFile(modelPath);
+  const source = await readFile(sourcePath, 'utf8');
+  const resources = parseTerraformPlan(source);
+  const imported = mapResources(resources);
+  const drift = diffIacImport(model, imported);
+  const totalDrift = drift.added.length + drift.removed.length + drift.changed.length;
+  console.log(`IaC drift for ${modelPath}:`);
+  console.log(`  + ${drift.added.length} added`);
+  console.log(`  ~ ${drift.changed.length} changed`);
+  console.log(`  - ${drift.removed.length} removed`);
+  const limit = 10;
+  for (const element of drift.added.slice(0, limit)) {
+    console.log(`  + ${element.properties.find((property) => property.key === 'iacAddress')?.value ?? element.id}`);
+  }
+  for (const change of drift.changed.slice(0, limit)) {
+    console.log(`  ~ ${change.incoming.properties.find((property) => property.key === 'iacAddress')?.value ?? change.incoming.id}`);
+  }
+  for (const element of drift.removed.slice(0, limit)) {
+    console.log(`  - ${element.properties.find((property) => property.key === 'iacAddress')?.value ?? element.id}`);
+  }
+  if (totalDrift > (limit * 3)) console.log('  …more');
+  if (failOn === 'drift' && totalDrift > 0) {
+    console.log(`Failing: ${totalDrift} drift finding(s).`);
+    return 1;
+  }
+  return 0;
+}
+
 async function diff(aPath: string, bPath: string): Promise<number> {
   const [a, b] = await Promise.all([readModelFile(aPath), readModelFile(bPath)]);
-  const diff = diffModels(a, b);
+  const diff = canonicalDiffModels(a, b);
 
   console.log(`Comparing ${aPath} -> ${bPath}`);
   console.log('');
@@ -259,7 +343,10 @@ async function diff(aPath: string, bPath: string): Promise<number> {
     diff.removedElements.length === 0 &&
     diff.changedElements.length === 0 &&
     diff.addedRelationships.length === 0 &&
-    diff.removedRelationships.length === 0
+    diff.removedRelationships.length === 0 &&
+    diff.changedRelationships.length === 0 &&
+    diff.addedViews.length === 0 &&
+    diff.removedViews.length === 0
   ) {
     console.log('No differences found.');
     return 0;
@@ -274,26 +361,34 @@ async function diff(aPath: string, bPath: string): Promise<number> {
     for (const element of diff.addedElements) console.log(`  + ${element}`);
     for (const element of diff.removedElements) console.log(`  - ${element}`);
     for (const change of diff.changedElements) {
-      console.log(`  ~ ${change.id} ${change.field}: "${change.from}" -> "${change.to}"`);
+      const id = change.entityId;
+      console.log(`  ~ ${id} ${change.field} changed`);
     }
     console.log('');
   }
 
-  if (diff.addedRelationships.length || diff.removedRelationships.length) {
+  if (
+    diff.addedRelationships.length ||
+    diff.removedRelationships.length ||
+    diff.changedRelationships.length
+  ) {
     console.log('Relationships:');
     for (const relationship of diff.addedRelationships) console.log(`  + ${relationship}`);
     for (const relationship of diff.removedRelationships) console.log(`  - ${relationship}`);
+    for (const change of diff.changedRelationships) {
+      console.log(`  ~ ${change.entityId} ${change.field} changed`);
+    }
     console.log('');
   }
 
-  console.log(
-    'Summary: ' +
-      `${diff.addedElements.length} element(s) added, ` +
-      `${diff.removedElements.length} element(s) removed, ` +
-      `${diff.changedElements.length} element(s) changed, ` +
-      `${diff.addedRelationships.length} relationship(s) added, ` +
-      `${diff.removedRelationships.length} relationship(s) removed.`,
-  );
+  if (diff.addedViews.length || diff.removedViews.length) {
+    console.log('Views:');
+    for (const view of diff.addedViews) console.log(`  + ${view}`);
+    for (const view of diff.removedViews) console.log(`  - ${view}`);
+    console.log('');
+  }
+
+  console.log(`Summary: ${diffSummary(diff)}`);
   return 0;
 }
 
@@ -305,10 +400,10 @@ function doctor(): number {
   console.log(`  CLI version:   0.1.0`);
   console.log('');
   console.log('Loaded model capability:');
-  console.log('  Read:    AOEF XML (.xml), native JSON (.json)');
-  console.log('  Write:   AOEF XML (.xml), native JSON (.json)');
-  console.log('  Export:  elements CSV (.csv), Mermaid (.mermaid), SVG (via @openarch/exporters)');
-  console.log('  Analyze: structural validation, model diff');
+  console.log('  Read:    AOEF XML (.xml), native JSON (.json), Archi .archimate (.archimate), C4 DSL (.dsl)');
+  console.log('  Write:   AOEF XML (.xml), native JSON (.json), Archi .archimate (.archimate), C4 DSL (.dsl)');
+  console.log('  Export:  elements CSV (.csv), Mermaid (.mermaid)');
+  console.log('  Analyze: structural validation, model diff (same core diff as server/web)');
   console.log('');
   console.log('ArchiMate® is a registered trademark of The Open Group.');
   return 0;
@@ -341,6 +436,59 @@ async function main(): Promise<number> {
     case 'report':
       requireArgs(args, command, 2);
       return report(args[0], args[1]);
+    case 'script':
+      if (args.length < 2) throw new Error('Command "script" expects at least 2 arguments (model, script.js).');
+      return script(args[0], args[1], args[2]);
+    case 'iac':
+      // openarch iac diff <model.json> <terraform-show.json> [--fail-on]
+      if (args[0] !== 'diff' || (args.length !== 3 && args.length !== 5)) {
+        throw new Error('Usage: openarch iac diff <model> <terraform plan JSON|yaml|k8s|compose> [--fail-on drift]');
+      }
+      return iacDiff(args[1], args[2], args[4]);
+    case 'publish-confluence': {
+      requireArgs(args, command, 1);
+      const flags: Record<string, string | undefined> = {};
+      for (let index = 1; index < args.length; index += 2) {
+        const name = String(args[index]).replace(/^--/, '');
+        flags[name] = args[index + 1];
+      }
+      return publish(args[0], flags);
+    }
+    case 'admin': {
+      const [sub, ...rest] = args;
+      if (sub === 'backup') {
+        const dataDir = rest.find((value) => !value.startsWith('--')) ?? 'data';
+        const options: BackupOptions = {
+          includeSecrets: rest.includes('--include-secrets'),
+          anonymise: rest.includes('--anonymise'),
+        };
+        const { file, manifest } = await backupData(dataDir, options);
+        console.log(`Backup written: ${file} (${manifest.files.length} file(s), secrets=${manifest.secrets}, anonymised=${manifest.anonymised})`);
+        return 0;
+      }
+      if (sub === 'restore') {
+        const [archive, dir = 'data'] = rest.filter((value) => !value.startsWith('--'));
+        if (!archive) throw new Error('Usage: openarch admin restore <archive.zip> <dataDir> [flags]');
+        const options: RestoreOptions = {
+          workspace: rest.find((value) => value.startsWith('--workspace='))?.split('=')[1],
+          at: rest.find((value) => value.startsWith('--at='))?.split('=')[1],
+          dryRun: rest.includes('--dry-run'),
+        };
+        if (rest.includes('--at')) throw new Error('--at requires the event-source store (coming in Track C); the flag surface is stable');
+        const report = await restoreBackup(archive, dir, options);
+        console.log(`Restore ${report.dryRun ? '(dry run) ' : ''}complete: ${report.restoredWorkspaces} workspace(s)`);
+        for (const warning of report.warnings) console.log(`  ${warning}`);
+        return 0;
+      }
+      if (sub === 'verify-store') {
+        const dataDir = rest[0] ?? 'data';
+        const report = await verifyStore(dataDir);
+        console.log(`Verify-store: ${report.workspaceCount} workspace(s), ok=${report.ok}`);
+        for (const warning of report.warnings) console.log(`  ${warning}`);
+        return report.ok ? 0 : 1;
+      }
+      throw new Error(`Unknown admin command "${sub ?? ''}". Use backup, restore, or verify-store.`);
+    }
     case 'doctor':
       requireArgs(args, command, 0);
       return doctor();

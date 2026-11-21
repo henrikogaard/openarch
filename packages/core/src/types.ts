@@ -105,12 +105,21 @@ export interface Bounds extends Point {
 
 export interface ViewNode {
   id: string;
-  /** AOEF xsi:type of the view node, e.g. "Element", "Label", "Group". */
+  /** AOEF xsi:type of the view node, e.g. "Element", "Label", "Container". */
   type: string;
   elementRef?: string;
   viewRef?: string;
   label: LocalizedText[];
   bounds: Bounds;
+  /** Native-only: parent container node id (RF nesting). Not exported to AOEF. */
+  parentId?: string;
+  /**
+   * Native-only: the Grouping element this container visualises (containers
+   * cannot carry elementRef in AOEF). Not exported.
+   */
+  groupingElementId?: string;
+  /** Native-only: stacking order within the view. Not exported to AOEF. */
+  zIndex?: number;
   raw?: RawXml;
 }
 
@@ -194,6 +203,16 @@ export interface Approval {
   createdAt: string;
 }
 
+/** A waiver excuses a specific validation/check finding (rule + optional entity). */
+export interface Waiver {
+  id: string;
+  rule: string;
+  entityId?: string;
+  reason: string;
+  createdBy?: string;
+  createdAt: string;
+}
+
 export interface Model {
   id: string;
   name: LocalizedText[];
@@ -213,9 +232,16 @@ export interface Model {
   domains?: Domain[];
   artefacts?: Artefact[];
   approvals?: Approval[];
+  waivers?: Waiver[];
+  /** Currently approved baseline snapshot id, if any. */
+  baselineId?: string;
   /** ISO timestamp of the last save; stamped by the repository. */
   updatedAt?: string;
   createdAt?: string;
+  /** Native JSON schema version, stamped on serialize. Not exported to AOEF. */
+  schemaVersion?: number;
+  /** ArchiMate metamodel version this model targets (default 3.2). */
+  metamodelVersion?: string;
   raw?: RawXml;
 }
 
@@ -254,7 +280,7 @@ export interface AuditEvent {
   id: string;
   modelId: string;
   actor: string;
-  action: 'create' | 'update' | 'delete' | 'import' | 'comment';
+  action: 'create' | 'update' | 'delete' | 'import' | 'comment' | 'restore';
   entityId?: string;
   summary: string;
   createdAt: string;
@@ -276,6 +302,12 @@ export interface WorkspaceMember {
   subject: string;
   role: WorkspaceRole;
   displayName?: string;
+}
+
+/** Maps a security group (e.g. an OIDC groups claim) to a workspace role. */
+export interface GroupRole {
+  group: string;
+  role: WorkspaceRole;
 }
 
 export interface ModelEnvelope {
@@ -302,6 +334,7 @@ export function createModel(partial: Partial<Model> = {}): Model {
     domains: partial.domains ?? [],
     artefacts: partial.artefacts ?? [],
     approvals: partial.approvals ?? [],
+    waivers: partial.waivers ?? [],
     createdAt: partial.createdAt ?? new Date().toISOString(),
     updatedAt: partial.updatedAt,
     raw: partial.raw,

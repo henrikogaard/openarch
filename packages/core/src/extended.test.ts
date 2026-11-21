@@ -1,22 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import {
   allowedRelationships,
+  applyWaivers,
   buildMatrix,
   buildPresetMatrix,
   createSampleModel,
   diffModels,
+  mergeModels,
   ELEMENT_TYPES,
   filterModelByViewpoint,
+  getMetamodel,
   impactAnalysis,
   isAllowedRelationship,
   MATRIX_PRESETS,
+  metamodelVersions,
   primaryText,
+  registerMetamodelVersion,
+  unregisterMetamodelVersion,
   registerPlugin,
+  unregisterPlugin,
   RELATIONSHIP_TYPES,
   searchModel,
   traceElements,
   validateModel,
   validateWithPlugins,
+  valueStreamViews,
   VIEWPOINTS,
 } from './index';
 
@@ -130,6 +138,61 @@ describe('analysis', () => {
   it('searches elements', () => {
     expect(searchModel(model, 'claim').length).toBeGreaterThan(0);
   });
+
+  it('has a versioned metamodel registry with 3.2 registered and warns on unknown versions', () => {
+    expect(metamodelVersions()).toContain('3.2');
+    expect(getMetamodel('3.2').elementTypes.length).toBe(ELEMENT_TYPES.length);
+    expect(getMetamodel('9.9').elementTypes.length).toBe(ELEMENT_TYPES.length); // falls back to 3.2
+
+    registerMetamodelVersion('4.0-test', { elementTypes: ELEMENT_TYPES, relationshipTypes: RELATIONSHIP_TYPES });
+    expect(metamodelVersions()).toContain('4.0-test');
+    // Clean up: registry state is process-global and must not leak into other
+    // tests in this file's workers.
+    unregisterMetamodelVersion('4.0-test');
+    expect(metamodelVersions()).not.toContain('4.0-test');
+
+    const model = createSampleModel();
+    model.metamodelVersion = '9.9';
+    expect(validateModel(model).some((issue) => issue.rule === 'model.metamodel-version')).toBe(true);
+    model.metamodelVersion = '3.2';
+    expect(validateModel(model).some((issue) => issue.rule === 'model.metamodel-version')).toBe(false);
+  });
+
+  it('derives value streams with ordered stages and supporting capabilities', () => {
+    const withStreams = createSampleModel();
+    const el = (id: string, type: string, name: string) => ({
+      id,
+      type,
+      name: [{ lang: 'en', value: name }],
+      documentation: [],
+      properties: [],
+    });
+    const rel = (id: string, type: string, source: string, target: string) => ({
+      id,
+      type,
+      source,
+      target,
+      name: [],
+      documentation: [],
+      properties: [],
+    });
+    withStreams.elements.push(
+      el('vs', 'ValueStream', 'Order to cash'),
+      el('stage-1', 'ValueStream', 'Order received'),
+      el('stage-2', 'ValueStream', 'Order fulfilled'),
+      el('cap-1', 'Capability', 'Order management'),
+    );
+    withStreams.relationships.push(
+      rel('f1', 'Flow', 'vs', 'stage-1'),
+      rel('f2', 'Flow', 'stage-1', 'stage-2'),
+      rel('r-cap', 'Realization', 'cap-1', 'stage-1'),
+    );
+    const streams = valueStreamViews(withStreams);
+    expect(streams.length).toBe(3); // vs + two stages are all ValueStream elements
+    const main = streams.find((stream) => stream.stream.id === 'vs')!;
+    expect(main.stages.map((stage) => stage.element.id)).toEqual(['vs', 'stage-1', 'stage-2']);
+    expect(main.stages[1].capabilities.map((capability) => capability.id)).toEqual(['cap-1']);
+  });
 });
 
 describe('diff', () => {
@@ -168,5 +231,47 @@ describe('plugins', () => {
     expect(validateWithPlugins(createSampleModel()).some((issue) => issue.rule === 'custom.sample')).toBe(
       true,
     );
+    // Registry state is process-global; undo to keep tests order-independent.
+    unregisterPlugin('test-plugin');
+  });
+});
+
+describe('waivers', () => {
+  it('applyWaivers drops excused findings by rule and entity', () => {
+    const issues = [
+      { severity: 'warning' as const, rule: 'element-without-domain', entityId: 'e-1', message: 'x' },
+      { severity: 'warning' as const, rule: 'element-without-domain', entityId: 'e-2', message: 'y' },
+      { severity: 'error' as const, rule: 'relationship.dangling', entityId: 'r-1', message: 'z' },
+    ];
+    const waived = applyWaivers(issues, [
+      { id: 'w1', rule: 'element-without-domain', entityId: 'e-1', reason: 'legacy', createdAt: '' },
+    ]);
+    expect(waived.map((issue) => issue.entityId)).toEqual(['e-2', 'r-1']);
+    // A rule-only waiver excuses all entities of that rule.
+    const all = applyWaivers(issues, [{ id: 'w2', rule: 'element-without-domain', reason: 'bulk', createdAt: '' }]);
+    expect(all.map((issue) => issue.rule)).toEqual(['relationship.dangling']);
+  });
+});
+
+describe('mergeModels', () => {
+  it('unions models with incoming winning conflicts and no dangling refs', () => {
+    const current = createSampleModel();
+    const incoming = createSampleModel();
+    // incoming renames e-portal and adds one element
+    incoming.elements = incoming.elements.map((e) =>
+      e.id === 'e-portal' ? { ...e, name: [{ lang: 'en', value: 'Claims Portal v2' }] } : e,
+    );
+    incoming.elements.push({
+      id: 'e-new',
+      type: 'Node',
+      name: [{ lang: 'en', value: 'New node' }],
+      documentation: [],
+      properties: [],
+    });
+    const merged = mergeModels(current, incoming);
+    expect(merged.elements.find((e) => e.id === 'e-portal')?.name[0].value).toBe('Claims Portal v2');
+    expect(merged.elements.some((e) => e.id === 'e-new')).toBe(true);
+    expect(merged.elements.length).toBe(current.elements.length + 1);
+    expect(validateModel(merged).some((i) => i.rule === 'relationship.dangling')).toBe(false);
   });
 });

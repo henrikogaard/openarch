@@ -16,6 +16,7 @@ import {
 } from '@openarch/core';
 import { useMemo, useState } from 'react';
 import ViewPreview from './ViewPreview';
+import { useTranslation } from '../i18n';
 
 interface ViewDesignerProps {
   model: Model;
@@ -38,6 +39,7 @@ export default function ViewDesigner({
   onDeleteView,
   onOpenView,
 }: ViewDesignerProps) {
+  const t = useTranslation();
   const activeView = model.views[activeViewIndex];
   const [config, setConfig] = useState<ViewConfig>(() =>
     activeView?.config ?? defaultConfigFor(initialViewpointId ?? VIEWPOINT_CATALOG[0].id),
@@ -133,7 +135,7 @@ export default function ViewDesigner({
     <div className="page view-designer-page">
       <header className="page-header">
         <div>
-          <h2>View designer</h2>
+          <h2>{t('viewDesignerHeading')}</h2>
           <p>
             Generate a view for a stakeholder and a granulation level. The recipe is stored with the
             view, so it can be regenerated when the model changes.
@@ -145,7 +147,7 @@ export default function ViewDesigner({
           </button>
           {editingIndex !== null && (
             <>
-              <button onClick={update}>Update view</button>
+              <button onClick={update}>{t('updateView')}</button>
               <button className="danger-link" onClick={() => onDeleteView(editingIndex)}>
                 Delete view
               </button>
@@ -256,9 +258,9 @@ export default function ViewDesigner({
                   setConfig({ ...config, groupBy: event.target.value as ViewConfig['groupBy'] })
                 }
               >
-                <option value="domain">Domain</option>
-                <option value="layer">Layer</option>
-                <option value="none">No grouping</option>
+                <option value="domain">{t('groupByDomain')}</option>
+                <option value="layer">{t('groupByLayer')}</option>
+                <option value="none">{t('groupByNone')}</option>
               </select>
             </label>
             <label className="field">
@@ -366,7 +368,7 @@ export default function ViewDesigner({
 
           {generatedViews.length > 0 && (
             <>
-              <h3>Generated views</h3>
+              <h3>{t('generatedViewsHeading')}</h3>
               <ul className="generated-view-list">
                 {generatedViews.map(({ view, index }) => (
                   <li key={view.id}>
@@ -388,7 +390,7 @@ export default function ViewDesigner({
 
         <section className="panel-card view-preview-panel">
           <div className="section-heading">
-            <h3>Preview</h3>
+            <h3>{t('preview')}</h3>
             <div className="stat-inline">
               <span className="chip">{preview.stats.elements} elements</span>
               <span className="chip">{preview.stats.relationships} relationships</span>

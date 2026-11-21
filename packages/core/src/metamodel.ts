@@ -14,6 +14,39 @@ import type {
  */
 export const METAMODEL_VERSION = '3.2';
 
+/** A versioned metamodel: element and relationship type tables for one ArchiMate version. */
+export interface MetamodelRegistry {
+  version: string;
+  elementTypes: ElementTypeDefinition[];
+  relationshipTypes: RelationshipTypeDefinition[];
+}
+
+const metamodelRegistries = new Map<string, MetamodelRegistry>();
+
+/** Register a metamodel version (e.g. a future 4.0) alongside 3.2. Idempotent per version. */
+export function registerMetamodelVersion(
+  version: string,
+  registry: Omit<MetamodelRegistry, 'version'>,
+): void {
+  if (!metamodelRegistries.has(version)) {
+    metamodelRegistries.set(version, { version, ...registry });
+  }
+}
+
+/** The registry for a version, falling back to the default (3.2). */
+export function getMetamodel(version: string = METAMODEL_VERSION): MetamodelRegistry {
+  return metamodelRegistries.get(version) ?? metamodelRegistries.get(METAMODEL_VERSION)!;
+}
+
+export function metamodelVersions(): string[] {
+  return [...metamodelRegistries.keys()];
+}
+
+/** Remove a registered metamodel version (test cleanup / plugin teardown). */
+export function unregisterMetamodelVersion(version: string): void {
+  metamodelRegistries.delete(version);
+}
+
 export const LAYER_COLORS: Record<Layer, string> = {
   business: '#f7dc6f',
   application: '#8ec3e8',
@@ -61,7 +94,12 @@ export const LAYER_ORDER: Layer[] = [
 type Shape = ElementTypeDefinition['shape'];
 type ElementSpec = [id: string, label: string, layer: Layer, kind: ElementKind, shape: Shape, icon: string];
 
-/** 59 ArchiMate 3.2 element types across layers, aspects, and extensions. */
+/**
+ * ArchiMate 3.2 element types across layers, aspects, and extensions
+ * (`ELEMENT_TYPES.length` entries). Two legacy types removed in ArchiMate
+ * 3.0 (`BusinessComponent`, `MigrationEvent`) are kept for import tolerance
+ * but hidden from the palette — see `PALETTE_HIDDEN_TYPES`.
+ */
 const ELEMENT_SPECS: ElementSpec[] = [
   // Strategy
   ['Resource', 'Resource', 'strategy', 'active', 'square', 'R'],
@@ -162,6 +200,19 @@ export const ELEMENT_TYPES: ElementTypeDefinition[] = ELEMENT_SPECS.map(
     color: LAYER_COLORS[layer],
   }),
 );
+
+/**
+ * Types kept in the registry for import tolerance but NOT offered in the
+ * palette, because the bundled AOEF 3.0 XSD rejects them:
+ * - `BusinessComponent`, `MigrationEvent` — removed in ArchiMate 3.0;
+ * - `ValueStream` — legal from ArchiMate 3.1 but absent from the vendored
+ *   3.0 XSD (kept visible deliberately for the value-stream feature;
+ *   exports containing it do not pass the current conformance suite).
+ */
+export const PALETTE_HIDDEN_TYPES: ReadonlySet<string> = new Set([
+  'BusinessComponent',
+  'MigrationEvent',
+]);
 
 export type RelationshipGroup = 'structural' | 'dependency' | 'dynamic' | 'other';
 
@@ -304,6 +355,12 @@ export const RELATIONSHIP_TYPES: RelationshipTypeDefinition[] = [
 
 const elementTypeIndex = new Map(ELEMENT_TYPES.map((type) => [type.id, type]));
 const relationshipTypeIndex = new Map(RELATIONSHIP_TYPES.map((type) => [type.id, type]));
+
+// The default registry is 3.2; other versions register themselves here.
+registerMetamodelVersion(METAMODEL_VERSION, {
+  elementTypes: ELEMENT_TYPES,
+  relationshipTypes: RELATIONSHIP_TYPES,
+});
 
 export function getElementType(id: string): ElementTypeDefinition | undefined {
   return elementTypeIndex.get(id);
