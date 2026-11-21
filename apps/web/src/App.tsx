@@ -7,6 +7,7 @@ import {
   createFromTemplate,
   createModel,
   createSampleModel,
+  WORKSPACE_TEMPLATES,
   diffModels,
   diffSummary,
   distributeNodes,
@@ -94,7 +95,7 @@ import ImportPreview from './components/ImportPreview';
 import Inspector from './components/Inspector';
 import InterfaceCatalog from './components/InterfaceCatalog';
 import MatrixView from './components/MatrixView';
-import OnboardingDialog from './components/OnboardingDialog';
+import OnboardingWizard from './components/OnboardingWizard';
 import Portfolio from './components/Portfolio';
 import SavedViews, { type SavedView } from './components/SavedViews';
 import ShortcutHelp from './components/ShortcutHelp';
@@ -1605,16 +1606,61 @@ export default function App() {
     return (
       <LanguageContext.Provider value={language}>
         {onboardingOpen && (
-          <OnboardingDialog
-            onCreate={() => {
-              dismissOnboarding();
-              setCreateSignal((n) => n + 1);
+          <OnboardingWizard
+            checks={{
+              probeServer: async (url) => {
+                // HEAD the base server URL (without /api suffix)
+                const base = url.replace(/\/api\/?$/, '');
+                try {
+                  const response = await fetch(`${base}/health`, {
+                    signal: AbortSignal.timeout(5000),
+                    credentials: 'omit',
+                  });
+                  return response.ok;
+                } catch {
+                  return false;
+                }
+              },
+              validateServerToken: async (url, token_bearer) => {
+                try {
+                  const response = await fetch(`${url.replace(/\/$/, '')}/me`, {
+                    headers: { authorization: `Bearer ${token_bearer}` },
+                    credentials: 'include',
+                    signal: AbortSignal.timeout(8000),
+                  });
+                  if (!response.ok) return null;
+                  const me = (await response.json()) as { subject: string; displayName?: string };
+                  return me.displayName ?? me.subject;
+                } catch {
+                  return null;
+                }
+              },
+              suggestedServerUrl: apiUrl,
             }}
-            onImport={() => {
+            onFinish={(config) => {
               dismissOnboarding();
-              setImportSignal((n) => n + 1);
+              if (config.mode === 'server' && config.serverUrl) {
+                // Persist the server URL + token for the session
+                window.sessionStorage.setItem('openarch-server-url', config.serverUrl);
+                setMode('server');
+              } else if (config.mode === 'folder') {
+                // Trigger the folder picker in the app shell
+                setMode('folder');
+              }
+              // Create the chosen workspace
+              const template = WORKSPACE_TEMPLATES.find((candidate) => candidate.id === config.templateId);
+              if (template) {
+                void createWorkspace({
+                  name: config.workspaceName,
+                  description: '',
+                  purpose: template.purpose,
+                  templateId: config.templateId,
+                  owner: '',
+                  tags: [],
+                });
+              }
             }}
-            onDismiss={dismissOnboarding}
+            onSkip={dismissOnboarding}
           />
         )}
         <WorkspaceHome
