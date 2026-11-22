@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# OpenArch resume: fast, non-installing health checks after an orb wakes.
+# Setup owns installs; this only reports what is missing so work can continue
+# or the agent can be told to rerun setup.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+missing=0
+
+if command -v node >/dev/null 2>&1; then
+  node_major="$(node -p 'process.versions.node.split(".")[0]')"
+  [ "$node_major" -ge 22 ] || { echo "resume: Node $(node --version) is older than 22" >&2; missing=1; }
+else
+  echo "resume: node is not on PATH" >&2
+  missing=1
+fi
+
+if [ ! -d node_modules ]; then
+  echo "resume: node_modules is missing; run .agents/setup" >&2
+  missing=1
+fi
+
+if ! command -v xmllint >/dev/null 2>&1; then
+  echo "resume: xmllint is missing; AOEF conformance tests will skip (run .agents/setup)" >&2
+  missing=1
+fi
+
+if ! ls -d "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome >/dev/null 2>&1; then
+  echo "resume: Playwright Chromium is missing; E2E tests need .agents/setup" >&2
+  missing=1
+fi
+
+if [ "$missing" -eq 0 ]; then
+  echo "resume: OpenArch toolchain ready"
+fi
+
+# Never fail startup for a missing optional tool; the message above is the cue.
+exit 0

@@ -72,6 +72,10 @@ desktop.ini
 # Agent worktrees
 .claude/worktrees/
 
+# Amp orb runtime and scratch files
+.amp/portals/
+.amp/in/
+
 # Docs site output
 site-dist/
 tmp-pack/

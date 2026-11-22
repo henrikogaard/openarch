@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# OpenArch orb setup: Node/npm dependencies, xmllint for AOEF conformance, and
+# the Playwright Chromium used by the E2E suites. No database or service is
+# required: local mode uses the browser, server mode writes a JSON file.
+#
+# Safe to rerun: dependency installation is skipped when every package.json
+# and package-lock.json hash matches the stamp in node_modules.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+started_at=$SECONDS
+
+step() {
+  printf '\n[orb-setup +%ss] %s\n' "$((SECONDS - started_at))" "$*"
+}
+
+step "Checking the Node.js toolchain"
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  echo "Node.js 22+ and npm are required but were not found on PATH." >&2
+  exit 1
+fi
+node_major="$(node -p 'process.versions.node.split(".")[0]')"
+if [ "$node_major" -lt 22 ]; then
+  echo "OpenArch requires Node.js 22+ (found $(node --version))." >&2
+  exit 1
+fi
+echo "Node $(node --version), npm $(npm --version)"
+
+step "Installing system packages for the test suite"
+if command -v xmllint >/dev/null 2>&1; then
+  echo "xmllint already installed: $(xmllint --version 2>&1 | head -1)"
+else
+  # The AOEF conformance tests skip without xmllint, hiding a real gate.
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libxml2-utils
+fi
+
+step "Installing npm workspace dependencies"
+lock_hash="$(
+  {
+    sha256sum package-lock.json
+    for manifest in apps/*/package.json packages/*/package.json; do
+      [ -f "$manifest" ] && sha256sum "$manifest"
+    done
+  } | sha256sum | cut -d' ' -f1
+)"
+stamp_file="node_modules/.openarch-setup-lock"
+if [ -d node_modules ] && [ -f "$stamp_file" ] && [ "$(cat "$stamp_file")" = "$lock_hash" ]; then
+  echo "Dependencies already match package-lock.json; skipping npm ci."
+else
+  # npm ci is reproducible and removes stale workspace links. On a warm
+  # snapshot this branch is skipped by the stamp above.
+  npm ci --no-audit --no-fund
+  printf '%s\n' "$lock_hash" > "$stamp_file"
+fi
+
+step "Installing the Playwright Chromium used by E2E"
+playwright_version="$(./node_modules/.bin/playwright --version | awk '{print $2}')"
+playwright_stamp="node_modules/.openarch-setup-playwright"
+playwright_browser="$(ls -d "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | tail -1 || true)"
+if [ -n "$playwright_browser" ] && [ -f "$playwright_stamp" ] && [ "$(cat "$playwright_stamp")" = "$playwright_version" ]; then
+  echo "Playwright Chromium $playwright_version already installed."
+else
+  ./node_modules/.bin/playwright install chromium
+  printf '%s\n' "$playwright_version" > "$playwright_stamp"
+fi
+
+step "Setup complete"
+echo "Node: $(node --version) | npm: $(npm --version) | xmllint: $(xmllint --version 2>&1 | head -1)"
+echo "Run: npm run typecheck && npm test && npm run build"
