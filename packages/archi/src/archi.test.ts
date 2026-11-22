@@ -306,3 +306,46 @@ describe('importArchi', () => {
     expect(() => importArchi(new Uint8Array([1, 2, 3, 4]))).toThrow(/Invalid Archi archive/);
   });
 });
+
+describe('Archi 5+ property definitions and archive guards', () => {
+  function makeModelXml(properties: string, definitions = ''): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<archimate:model xmlns:archimate="http://www.archimatetool.com/archimate" name="A5" id="a5">
+  <propertyDefinitions>${definitions}</propertyDefinitions>
+  <folder name="Business" id="f1">
+    <element xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="BusinessActor" id="e1" name="Vip">
+      <properties>
+        ${properties}
+      </properties>
+    </element>
+  </folder>
+</archimate:model>`;
+  }
+
+  function zipFor(modelXml: string): Uint8Array {
+    return zipSync({ 'model.xml': strToU8(modelXml) });
+  }
+
+  it('imports Archi 5 propertyDefinitionRef properties (previously silently dropped)', () => {
+    const xml = makeModelXml(
+      `<property propertyDefinitionRef="pd-1"><value>gold</value></property>`,
+      `<propertyDefinition id="pd-1" name="tier"><value>string</value></propertyDefinition>`,
+    );
+    const result = importArchi(zipFor(xml));
+    const element = result.model.elements.find((e) => e.id === 'e1')!;
+    expect(element.properties).toEqual([{ key: 'tier', value: 'gold' }]);
+  });
+
+  it('still imports legacy key/value properties unchanged', () => {
+    const xml = makeModelXml(`<property key="owner" value="pk"/>`);
+    const result = importArchi(zipFor(xml));
+    expect(result.model.elements[0].properties).toEqual([{ key: 'owner', value: 'pk' }]);
+  });
+
+  it('rejects archives with too many entries', () => {
+    const entries: Record<string, Uint8Array> = {};
+    for (let i = 0; i < 2500; i += 1) entries[`junk-${i}.txt`] = strToU8('x');
+    const bomb = zipSync(entries);
+    expect(() => importArchi(bomb)).toThrow(/archive/i);
+  });
+});

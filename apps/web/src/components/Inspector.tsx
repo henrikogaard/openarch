@@ -9,12 +9,22 @@ import {
 } from '@openarch/core';
 import { useEffect, useState } from 'react';
 import { useTranslation } from '../i18n';
+import {
+  confluencePageUrl,
+  jiraIssueUrl,
+  linksOfElement,
+  linkPropertyKey,
+  type ConnectorConfig,
+} from '@openarch/connectors';
+
+type LinkSystem = 'jira' | 'confluence' | 'servicenow';
 
 interface InspectorProps {
   element?: ArchiElement;
   elements: ArchiElement[];
   relationships: Relationship[];
   domains?: Domain[];
+  connectors?: ConnectorConfig;
   onSelect: (id: string) => void;
   onUpdate: (id: string, patch: Partial<ArchiElement>) => void;
 }
@@ -24,12 +34,15 @@ export default function Inspector({
   elements,
   relationships,
   domains = [],
+  connectors,
   onSelect,
   onUpdate,
 }: InspectorProps) {
   const t = useTranslation();
   const [name, setName] = useState('');
   const [documentation, setDocumentation] = useState('');
+  const [linkSystem, setLinkSystem] = useState<LinkSystem>('jira');
+  const [linkValue, setLinkValue] = useState('');
 
   useEffect(() => {
     setName(primaryText(element?.name ?? []));
@@ -40,7 +53,7 @@ export default function Inspector({
     return (
       <aside className="inspector empty-inspector">
         <h3>{t('inspector')}</h3>
-        <p>Select an element in the canvas or catalogue to see its details.</p>
+        <p>{t('inspectorHint')}</p>
       </aside>
     );
   }
@@ -77,7 +90,74 @@ export default function Inspector({
       </section>
 
       <section>
-        <h4>Placement</h4>
+        <h4>{t('externalLinks')}</h4>
+        <ul className="relation-list">
+          {linksOfElement(element).map((link) => {
+            const url =
+              link.system === 'jira'
+                ? jiraIssueUrl(connectors ?? {}, link.value)
+                : link.system === 'confluence'
+                  ? confluencePageUrl(connectors ?? {}, link.value)
+                  : undefined;
+            return (
+              <li key={link.system + link.value}>
+                <span className="chip">{link.system}</span>
+                {url ? (
+                  <a href={url} target="_blank" rel="noreferrer">{link.value}</a>
+                ) : (
+                  <span className="mono">{link.value}</span>
+                )}
+                <button
+                  className="small-button"
+                  onClick={() =>
+                    onUpdate(element.id, {
+                      properties: element.properties.filter(
+                        (property) => property.key !== linkPropertyKey(link.system as LinkSystem),
+                      ),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </li>
+            );
+          })}
+          {linksOfElement(element).length === 0 && (
+            <li className="empty">{t('noLinks')}</li>
+          )}
+        </ul>
+        <div className="field-row">
+          <select value={linkSystem} onChange={(event) => setLinkSystem(event.target.value as LinkSystem)}>
+            <option value="jira">{t('jiraIssue')}</option>
+            <option value="confluence">{t('confluencePage')}</option>
+            <option value="servicenow">{t('serviceNowCi')}</option>
+          </select>
+          <input
+            className="form-input"
+            placeholder={linkSystem === 'jira' ? 'PROJ-123' : linkSystem === 'confluence' ? 'page id' : 'CI name'}
+            value={linkValue}
+            onChange={(event) => setLinkValue(event.target.value)}
+          />
+          <button
+            className="small-button"
+            disabled={!linkValue.trim()}
+            onClick={() => {
+              onUpdate(element.id, {
+                properties: [
+                  ...element.properties.filter((property) => property.key !== linkPropertyKey(linkSystem)),
+                  { key: linkPropertyKey(linkSystem), value: linkValue.trim() },
+                ],
+              });
+              setLinkValue('');
+            }}
+          >
+            Link
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h4>{t('placement')}</h4>
         <div className="field-row">
           <label className="field">
             Domain
@@ -148,7 +228,7 @@ export default function Inspector({
               />
               <button
                 className="icon-button"
-                title="Remove property"
+                title={t('removeProperty')}
                 onClick={() => updateProperties(element.properties.filter((_, i) => i !== index))}
               >
                 ×
@@ -185,7 +265,7 @@ export default function Inspector({
       </section>
 
       <section className="mono inspector-id">
-        <h4>Identifier</h4>
+        <h4>{t('identifier')}</h4>
         {element.id}
       </section>
     </aside>

@@ -154,8 +154,15 @@ function buildDefinitionRegistry(model: Model): DefinitionRegistry {
     const existing = byName.get(key);
     if (existing) return existing;
     counter += 1;
+    // Ids are document-global xs:ID values — guarantee uniqueness even
+    // against hand-edited files with sparse propdef ids.
+    let id = `propdef-${counter}`;
+    while (byId.has(id)) {
+      counter += 1;
+      id = `propdef-${counter}`;
+    }
     const definition: PropertyDefinition = {
-      id: `propdef-${counter}`,
+      id,
       name: name.trim() || 'Property',
       type: 'string',
     };
@@ -205,10 +212,20 @@ function serializeProperties(
     .map((property) => {
       const ref = refFor(property);
       if (!ref) return undefined;
-      const lang = property.raw ? str((property.raw.value as RawXml)?.['@_xml:lang']) : '';
+      // Preserve multi-language <value> variants (and any other raw fidelity)
+      // when the raw fragment is intact; fall back to the (primary language)
+      // parsed value otherwise.
+      const values = asArray<RawXml>(property.raw?.value);
+      const languageValues = values.filter((value) => '#text' in value || '@_xml:lang' in value);
+      const valueClause = languageValues.length
+        ? languageValues.map((value) => ({
+            ...(str(value['@_xml:lang']) ? { '@_xml:lang': str(value['@_xml:lang']) } : {}),
+            '#text': str(value['#text']) || property.value,
+          }))
+        : [{ '#text': property.value }];
       return {
         '@_propertyDefinitionRef': ref,
-        value: [{ ...(lang ? { '@_xml:lang': lang } : {}), '#text': property.value }],
+        value: valueClause,
       } as RawXml;
     })
     .filter((value): value is RawXml => Boolean(value));
@@ -337,7 +354,42 @@ function parseViewNode(raw: RawXml): ViewNode {
   };
 }
 
-function serializeViewNode(node: ViewNode): RawXml {
+/**
+ * Parse a view node and flatten container children into the same list.
+ *
+ * AOEF container nodes carry children as nested `<node>` elements whose
+ * bounds are RELATIVE to their container; the model stores bounds as
+ * absolute canvas coordinates and keeps the parent link in `parentId`
+ * (native-only, invisible to AOEF). Nested children therefore become real
+ * model nodes — visible to editing, deletion, and validation — instead of
+ * opaque `raw` passthrough that nothing could see or prune.
+ */
+function parseViewNodeTree(raw: RawXml, offset: Point, parentId: string | undefined, into: ViewNode[]): ViewNode {
+  const bounds = boundsFromXml(raw);
+  const node: ViewNode = {
+    id: str(raw['@_identifier']),
+    type: str(raw['@_xsi:type']),
+    elementRef: str(raw['@_elementRef']) || undefined,
+    viewRef: asArray<RawXml>(raw.viewRef)[0]
+      ? str(asArray<RawXml>(raw.viewRef)[0]['@_ref'])
+      : undefined,
+    label: localizedFromXml(raw.label),
+    bounds: offset ? { x: offset.x + bounds.x, y: offset.y + bounds.y, w: bounds.w, h: bounds.h } : bounds,
+    ...(parentId ? { parentId } : {}),
+  };
+  // Keep the raw fragment (minus nested nodes, which we now model explicitly)
+  // so prior fidelity — documentation, style, unknown attributes — survives.
+  const { node: _children, ...rawWithoutChildren } = raw;
+  void _children;
+  node.raw = rawWithoutChildren as RawXml;
+  into.push(node);
+  for (const child of asArray<RawXml>(raw.node)) {
+    parseViewNodeTree(child, { x: node.bounds.x, y: node.bounds.y }, node.id, into);
+  }
+  return node;
+}
+
+function serializeViewNode(node: ViewNode, parent: Point, childrenOf: Map<string, ViewNode[]>): RawXml {
   const out = copyAttributes(node.raw, [
     '@_identifier',
     '@_xsi:type',
@@ -349,10 +401,11 @@ function serializeViewNode(node: ViewNode): RawXml {
   ]);
   out['@_identifier'] = node.id;
   out['@_xsi:type'] = node.type;
-  out['@_x'] = String(nonNegative(node.bounds.x));
-  out['@_y'] = String(nonNegative(node.bounds.y));
-  out['@_w'] = String(nonNegative(node.bounds.w));
-  out['@_h'] = String(nonNegative(node.bounds.h));
+  // Coordinates are relative to this node's container.
+  out['@_x'] = String(nonNegative(Math.round(node.bounds.x - parent.x)));
+  out['@_y'] = String(nonNegative(Math.round(node.bounds.y - parent.y)));
+  out['@_w'] = String(Math.max(1, nonNegative(Math.round(node.bounds.w))));
+  out['@_h'] = String(Math.max(1, nonNegative(Math.round(node.bounds.h))));
   if (node.elementRef) out['@_elementRef'] = node.elementRef;
 
   // ViewConceptType sequence: label*, documentation*, style?, viewRef*
@@ -362,8 +415,11 @@ function serializeViewNode(node: ViewNode): RawXml {
   if (node.raw?.style) out.style = node.raw.style;
   if (node.viewRef) out.viewRef = [{ '@_ref': node.viewRef }];
 
-  // Container nodes carry child nodes after the base sequence.
-  if (node.raw?.node) out.node = node.raw.node;
+  // Container nodes carry their children after the base sequence.
+  const children = childrenOf.get(node.id);
+  if (children?.length) {
+    out.node = children.map((child) => serializeViewNode(child, node.bounds, childrenOf));
+  }
   return out;
 }
 
@@ -413,11 +469,15 @@ function serializeViewEdge(edge: ViewEdge): RawXml {
 }
 
 function parseView(raw: RawXml): View {
+  const nodes: ViewNode[] = [];
+  for (const nodeRaw of asArray<RawXml>(raw.node)) {
+    parseViewNodeTree(nodeRaw, { x: 0, y: 0 }, undefined, nodes);
+  }
   return {
     id: str(raw['@_identifier']),
     type: str(raw['@_xsi:type']),
     name: localizedFromXml(raw.name),
-    nodes: asArray<RawXml>(raw.node).map(parseViewNode),
+    nodes,
     edges: asArray<RawXml>(raw.connection).map(parseViewEdge),
     raw,
   };
@@ -435,7 +495,17 @@ function serializeView(view: View): RawXml {
 
   // Always overwrite the containers so deletions are honoured. `Diagram`
   // allows zero nodes and zero connections, so an empty array is valid.
-  out.node = view.nodes.map(serializeViewNode);
+  // Container children are emitted nested under their parent (with bounds
+  // relative to it); only container roots appear at the top level.
+  const childrenOf = new Map<string, ViewNode[]>();
+  for (const node of view.nodes) {
+    if (!node.parentId) continue;
+    childrenOf.set(node.parentId, [...(childrenOf.get(node.parentId) ?? []), node]);
+  }
+  const origin: Point = { x: 0, y: 0 };
+  out.node = view.nodes
+    .filter((node) => !node.parentId)
+    .map((node) => serializeViewNode(node, origin, childrenOf));
   out.connection = view.edges.map(serializeViewEdge);
   return out;
 }

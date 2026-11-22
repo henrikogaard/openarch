@@ -10,9 +10,12 @@
     "cli": "tsx src/index.ts"
   },
   "dependencies": {
+    "@openarch/c4": "*",
     "@openarch/core": "*",
-    "@openarch/repository": "*",
-    "@openarch/exporters": "*"
+    "@openarch/enrichment": "*",
+    "@openarch/exporters": "*",
+    "@openarch/iac": "*",
+    "@openarch/repository": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

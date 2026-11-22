@@ -73,8 +73,9 @@ function paramsOf(value: unknown): Record<string, unknown> {
 async function dispatch(request: JsonRpcRequest, store: ModelStore): Promise<JsonRpcResponse | null> {
   const { id, method, params } = request;
   const responseId = id ?? null;
+  const isNotification = id === undefined || id === null;
 
-  // Notifications never receive a response.
+  // Known notifications are acknowledged silently.
   if (method === 'notifications/initialized' || method === 'notifications/cancelled') {
     return null;
   }
@@ -143,14 +144,21 @@ async function dispatch(request: JsonRpcRequest, store: ModelStore): Promise<Jso
         }
         break;
       }
-      default:
+      default: {
+        // JSON-RPC 2.0: only REQUESTS get error responses — an unknown
+        // NOTIFICATION must be silently dropped, never answered.
+        if (isNotification) return null;
         return errorResponse(responseId, -32601, `Method not found: ${method}`);
+      }
     }
 
     // Requests without an id are notifications: acknowledge with no response.
     if (id === undefined) return null;
     return { jsonrpc: '2.0', id: responseId, result };
   } catch (error) {
+    // Errors during a notification are swallowed too (a client that did not
+    // expect a reply cannot process one).
+    if (isNotification) return null;
     if (error instanceof ResourceNotFoundError) {
       return errorResponse(responseId, -32002, error.message);
     }

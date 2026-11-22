@@ -7,7 +7,7 @@ import {
   type Model,
   type Relationship,
 } from '@openarch/core';
-import type { Proposal, RawResource } from './types';
+import type { EnrichmentResult, Proposal, RawResource } from './types';
 
 const FALLBACK_TYPE = 'ApplicationComponent';
 
@@ -170,6 +170,9 @@ export function proposeElements(model: Model, resources: RawResource[]): Proposa
 }
 
 /** Convert a proposal into a stable, deterministic ArchiMate element. */
+/** Convert proposals into stable, deterministic ArchiMate elements.
+ * Slugs can collide across different keys (`a/b.ts` and `a_b.ts` both slug to
+ * `a-b-ts`), so ids are disambiguated deterministically. */
 function slug(value: string): string {
   return value
     .toLowerCase()
@@ -178,17 +181,27 @@ function slug(value: string): string {
 }
 
 export function proposalsToElements(proposals: Proposal[]): ArchiElement[] {
-  return proposals.map((proposal) => ({
-    id: `enriched-${slug(proposal.id)}`,
-    type: getElementType(proposal.type) ? proposal.type : FALLBACK_TYPE,
-    name: [{ lang: 'en', value: proposal.name }],
-    documentation: proposal.documentation ? [{ lang: 'en', value: proposal.documentation }] : [],
-    properties: [
-      { key: 'source', value: proposal.source },
-      { key: 'enrichmentReason', value: proposal.reason },
-      { key: 'enrichmentConfidence', value: String(proposal.confidence) },
-    ],
-  }));
+  const usedIds = new Set<string>();
+  return proposals.map((proposal) => {
+    let id = `enriched-${slug(proposal.id)}`;
+    let suffix = 2;
+    while (usedIds.has(id)) {
+      id = `enriched-${slug(proposal.id)}-${suffix}`;
+      suffix += 1;
+    }
+    usedIds.add(id);
+    return {
+      id,
+      type: getElementType(proposal.type) ? proposal.type : FALLBACK_TYPE,
+      name: [{ lang: 'en', value: proposal.name }],
+      documentation: proposal.documentation ? [{ lang: 'en', value: proposal.documentation }] : [],
+      properties: [
+        { key: 'source', value: proposal.source },
+        { key: 'enrichmentReason', value: proposal.reason },
+        { key: 'enrichmentConfidence', value: String(proposal.confidence) },
+      ],
+    };
+  });
 }
 
 const MAX_RELATIONSHIPS = 40;
@@ -269,4 +282,13 @@ export function proposeRelationships(
   // element names/types already encode everything needed for the heuristics.
   void proposals;
   return relationships;
+}
+
+/**
+ * Full pipeline over raw resources: deduped proposals plus the count of
+ * skipped duplicates on one place.
+ */
+export function runEnrichment(model: Model, resources: RawResource[]): EnrichmentResult {
+  const proposals = proposeElements(model, resources);
+  return { proposals, skipped: resources.length - proposals.length };
 }

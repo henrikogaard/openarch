@@ -24,6 +24,7 @@ export function traceElements(model: Model, elementId: string, options: TraceOpt
   const maxDepth = options.maxDepth ?? 3;
   const types = options.relationshipTypes;
   const results: TraceEntry[] = [];
+  const elementIndex = new Map(model.elements.map((element) => [element.id, element]));
   const visited = new Set<string>([elementId]);
   let frontier = [elementId];
 
@@ -43,7 +44,7 @@ export function traceElements(model: Model, elementId: string, options: TraceOpt
           direction = 'in';
         }
         if (!otherId || !direction || visited.has(otherId)) continue;
-        const element = getElementById(model, otherId);
+        const element = elementIndex.get(otherId);
         if (!element) continue;
         visited.add(otherId);
         results.push({ element, relationship, direction, depth });
@@ -89,13 +90,25 @@ export function buildMatrix(
   const rowIds = new Set(rows.map((element) => element.id));
   const columnIds = new Set(columns.map((element) => element.id));
   const cells: MatrixCell[] = [];
+  const cellIndex = new Map<string, MatrixCell>();
+  const upsert = (rowId: string, columnId: string, relationship: Relationship): void => {
+    const key = `${rowId}\u0000${columnId}`;
+    const existing = cellIndex.get(key);
+    if (existing) {
+      existing.relationships.push(relationship);
+      return;
+    }
+    const cell: MatrixCell = { rowId, columnId, relationships: [relationship] };
+    cellIndex.set(key, cell);
+    cells.push(cell);
+  };
 
   for (const relationship of model.relationships) {
     if (relationshipTypes && !relationshipTypes.includes(relationship.type)) continue;
     if (rowIds.has(relationship.source) && columnIds.has(relationship.target)) {
-      cells.push({ rowId: relationship.source, columnId: relationship.target, relationships: [relationship] });
+      upsert(relationship.source, relationship.target, relationship);
     } else if (rowIds.has(relationship.target) && columnIds.has(relationship.source)) {
-      cells.push({ rowId: relationship.target, columnId: relationship.source, relationships: [relationship] });
+      upsert(relationship.target, relationship.source, relationship);
     }
   }
   return { title, rows, columns, cells };
@@ -145,6 +158,73 @@ export function orphanElements(model: Model): ArchiElement[] {
     connected.add(relationship.target);
   }
   return model.elements.filter((element) => !connected.has(element.id));
+}
+
+export interface ValueStreamStage {
+  element: ArchiElement;
+  capabilities: ArchiElement[];
+}
+
+export interface ValueStreamView {
+  stream: ArchiElement;
+  stages: ValueStreamStage[];
+}
+
+/**
+ * Derive value streams: each ValueStream element is a stage chain ordered by
+ * Flow relationships; capabilities supporting a stage are linked to it via
+ * Realization.
+ */
+export function valueStreamViews(model: Model): ValueStreamView[] {
+  const streams = model.elements.filter((element) => element.type === 'ValueStream');
+  return streams.map((stream) => {
+    // All stages in this stream: the stream element itself plus stages chained
+    // to it by Flow (transitively).
+    const stageIds = new Set<string>([stream.id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const rel of model.relationships) {
+        if (rel.type !== 'Flow') continue;
+        if (stageIds.has(rel.source) && !stageIds.has(rel.target)) {
+          stageIds.add(rel.target);
+          grew = true;
+        } else if (stageIds.has(rel.target) && !stageIds.has(rel.source)) {
+          stageIds.add(rel.source);
+          grew = true;
+        }
+      }
+    }
+    // Order stages by following Flow direction from the stream element.
+    const ordered: string[] = [stream.id];
+    const seen = new Set<string>([stream.id]);
+    let current = stream.id;
+    while (true) {
+      const next = model.relationships.find(
+        (rel) => rel.type === 'Flow' && rel.source === current && stageIds.has(rel.target) && !seen.has(rel.target),
+      );
+      if (!next) break;
+      ordered.push(next.target);
+      seen.add(next.target);
+      current = next.target;
+    }
+    // Any remaining stages (not reachable by forward flow) appended in id order.
+    for (const id of [...stageIds].sort()) if (!seen.has(id)) ordered.push(id);
+
+    const capabilitiesOf = (stageId: string) =>
+      model.relationships
+        .filter((rel) => rel.type === 'Realization' && rel.target === stageId)
+        .map((rel) => model.elements.find((element) => element.id === rel.source))
+        .filter((element): element is ArchiElement => Boolean(element) && element!.type === 'Capability');
+
+    return {
+      stream,
+      stages: ordered.map((id) => {
+        const element = model.elements.find((candidate) => candidate.id === id)!;
+        return { element, capabilities: capabilitiesOf(id) };
+      }),
+    };
+  });
 }
 
 export function typeCounts(model: Model): Array<{ type: string; label: string; count: number; color?: string }> {

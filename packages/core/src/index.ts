@@ -9,3 +9,8 @@ export * from './templates';
 export * from './analysis';
 export * from './diff';
 export * from './plugins';
+export * from './scripting';
+export * from './conflict';
+export * from './layout';
+export * from './scenarios';
+export * from './ops';

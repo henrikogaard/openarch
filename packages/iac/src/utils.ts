@@ -41,16 +41,32 @@ export function stringRecord(value: unknown): Record<string, string> {
 }
 
 /**
+ * Attribute names that look like credentials — values are never persisted.
+ * Kubernetes applies this rule to Secret/ConfigMap values; terraform plans
+ * document that sensitive values appear in plaintext, so the same rule
+ * applies to any attribute whose name matches.
+ */
+const SECRET_KEY_PATTERN = /(pass(word)?|secret|token|api[_-]?key|private[_-]?key|credential|client[_-]?secret)/i;
+export const REDACTED_VALUE = '[REDACTED]';
+
+/**
  * Flatten top-level scalar attributes and arrays of scalars into strings.
  * Nested objects and arrays containing objects are deliberately skipped.
+ * Secret-looking keys are redacted BEFORE anything can persist them.
  */
 export function flattenScalarAttributes(values: UnknownRecord): Record<string, string> {
   const attributes: Record<string, string> = {};
   for (const [key, value] of Object.entries(values)) {
+    if (SECRET_KEY_PATTERN.test(key)) {
+      attributes[key] = REDACTED_VALUE;
+      continue;
+    }
     if (isScalar(value)) {
       attributes[key] = String(value);
     } else if (Array.isArray(value) && value.length > 0 && value.every(isScalar)) {
-      attributes[key] = value.map((entry) => String(entry)).join(', ');
+      attributes[key] = SECRET_KEY_PATTERN.test(key)
+        ? REDACTED_VALUE
+        : value.map((entry) => String(entry)).join(', ');
     }
   }
   return attributes;

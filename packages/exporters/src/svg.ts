@@ -30,7 +30,10 @@ function contentBounds(nodes: ViewNode[], padding: number): DiagramBounds {
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (const node of nodes) {
-    const { x, y, w, h } = node.bounds;
+    const x = safeNumber(node.bounds.x);
+    const y = safeNumber(node.bounds.y);
+    const w = Math.max(1, safeNumber(node.bounds.w));
+    const h = Math.max(1, safeNumber(node.bounds.h));
     minX = Math.min(minX, x);
     minY = Math.min(minY, y);
     maxX = Math.max(maxX, x + w);
@@ -53,9 +56,17 @@ function markerDefs(id: string): string {
   );
 }
 
+/** XML-valid numbers for hand-edited models (NaN bounds → 0). */
+function safeNumber(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
 /** Render a single view node: a colored rectangle for elements, text otherwise. */
 function renderNode(model: Model, node: ViewNode): string {
-  const { x, y, w, h } = node.bounds;
+  const x = safeNumber(node.bounds.x);
+  const y = safeNumber(node.bounds.y);
+  const w = Math.max(1, safeNumber(node.bounds.w));
+  const h = Math.max(1, safeNumber(node.bounds.h));
   if (node.elementRef) {
     const element = model.elements.find((candidate) => candidate.id === node.elementRef);
     if (element) {

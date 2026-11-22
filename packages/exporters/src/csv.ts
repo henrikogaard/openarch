@@ -9,10 +9,19 @@ function csvCell(value: string): string {
   return value;
 }
 
+/**
+ * Neutralise spreadsheet formula injection: untrusted cell values starting
+ * with =, +, -, or @ would execute when opened in Excel/Sheets — prefixing
+ * a single quote defuses them while keeping the text visible.
+ */
+function defuseFormula(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
 /** Join a header and rows into a CSV document. */
 function toCsv(header: string[], rows: string[][]): string {
   return [header, ...rows]
-    .map((row) => row.map(csvCell).join(','))
+    .map((row) => row.map((cell) => csvCell(defuseFormula(cell))).join(','))
     .join('\n');
 }
 

@@ -366,3 +366,35 @@ describe('standards packs', () => {
     expect(() => applyStandardsPack(model, 'unknown')).toThrow(/Unknown standards pack/);
   });
 });
+
+describe('DOCX/PPTX packs', () => {
+  it('exports a valid .docx containing the workspace content', async () => {
+    const { createSampleModel } = await import('@openarch/core');
+    const { unzipSync, strFromU8 } = await import('fflate');
+    const { exportWorkspaceDocx } = await import('./docx');
+    const model = createSampleModel();
+    const bytes = await exportWorkspaceDocx(model);
+    expect(bytes[0]).toBe(0x50); // 'P'
+    expect(bytes[1]).toBe(0x4b); // 'K' — zip container
+    const entries = unzipSync(bytes);
+    const documentXml = strFromU8(entries['word/document.xml']);
+    expect(documentXml).toContain('Sample insurance model');
+    expect(documentXml).toContain('Claims Portal');
+  });
+
+  it('exports a valid .pptx with one slide per view', async () => {
+    const { createSampleModel } = await import('@openarch/core');
+    const { unzipSync, strFromU8 } = await import('fflate');
+    const { exportViewsPptx } = await import('./pptx');
+    const model = createSampleModel();
+    const bytes = await exportViewsPptx(model);
+    expect(bytes[0]).toBe(0x50);
+    expect(bytes[1]).toBe(0x4b);
+    const entries = unzipSync(bytes);
+    const slideKeys = Object.keys(entries).filter((name) => name.startsWith('ppt/slides/slide'));
+    // title slide + one per view (+ one artefacts slide when artefacts exist)
+    expect(slideKeys.length).toBeGreaterThanOrEqual(model.views.length + 1);
+    const slide1 = strFromU8(entries['ppt/slides/slide2.xml']);
+    expect(slide1).toContain('Overview');
+  });
+});

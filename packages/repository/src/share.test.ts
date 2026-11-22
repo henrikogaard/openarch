@@ -42,3 +42,10 @@ describe('shareable snapshots', () => {
     expect(hash.length).toBeLessThan(MAX_SHARE_HASH_LENGTH);
   });
 });
+
+describe('share link reader guards', () => {
+  it('rejects oversized fragments instead of decompressing them', async () => {
+    const huge = '#share=' + 'a'.repeat(70_000);
+    expect(await readShareHash(huge)).toBeUndefined();
+  });
+});

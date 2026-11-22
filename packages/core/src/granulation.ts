@@ -503,16 +503,17 @@ export function buildConfiguredView(
   if (config.rootElementIds?.length) {
     const roots = new Set(config.rootElementIds);
     let frontier = [...roots];
-    const visited = new Set(roots);
+    const visited = new Set<string>(roots);
     for (let depth = 0; depth < Math.max(1, config.depth); depth += 1) {
       const next: string[] = [];
+      const frontierSet = new Set(frontier);
       for (const relationship of model.relationships) {
         if (!allowedRelationships.has(relationship.type)) continue;
         for (const [from, to] of [
           [relationship.source, relationship.target],
           [relationship.target, relationship.source],
         ] as const) {
-          if (!frontier.includes(from) || visited.has(to)) continue;
+          if (!frontierSet.has(from) || visited.has(to)) continue;
           visited.add(to);
           next.push(to);
         }
@@ -547,6 +548,12 @@ export function buildConfiguredView(
   }
 
   const elements = [...visible.values()];
+  /**
+   * Node/edge/group ids must be unique across the whole document (AOEF ids
+   * are xs:ID and document-global), so generated ids are namespaced with the
+   * view id — two generated views sharing elements must never collide.
+   */
+  const viewKey = slug(options.id ?? `view-${config.viewpointId}`);
   const relationships = model.relationships.filter(
     (relationship) =>
       allowedRelationships.has(relationship.type) &&
@@ -582,7 +589,7 @@ export function buildConfiguredView(
     );
     if (config.groupBy !== 'none') {
       nodes.push({
-        id: `group-${slug(groupName)}`,
+        id: `group-${viewKey}-${slug(groupName)}`,
         type: 'Label',
         label: [{ lang: 'en', value: groupName }],
         bounds: { x: 30, y, w: 240, h: 24 },
@@ -591,7 +598,7 @@ export function buildConfiguredView(
     }
     const rows = Math.ceil(members.length / COLUMNS);
     members.forEach((element, index) => {
-      const nodeId = `gen-${element.id}`;
+      const nodeId = `gen-${viewKey}-${element.id}`;
       nodeOf.set(element.id, nodeId);
       nodes.push({
         id: nodeId,
@@ -612,7 +619,7 @@ export function buildConfiguredView(
   const edges: ViewEdge[] = relationships
     .filter((relationship) => nodeOf.has(relationship.source) && nodeOf.has(relationship.target))
     .map((relationship: Relationship) => ({
-      id: `gen-edge-${relationship.id}`,
+      id: `gen-edge-${viewKey}-${relationship.id}`,
       type: 'Relationship',
       relationshipRef: relationship.id,
       source: nodeOf.get(relationship.source)!,

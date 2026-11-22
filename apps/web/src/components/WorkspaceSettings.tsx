@@ -9,10 +9,32 @@ import {
   type ModelPurpose,
   type WorkspaceStatus,
 } from '@openarch/core';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useTranslation } from '../i18n';
+import type { ConnectorConfig } from '@openarch/connectors';
+
+export interface MemberDraft {
+  subject: string;
+  role: 'owner' | 'editor' | 'viewer';
+  displayName?: string;
+}
+
+export interface GroupRoleDraft {
+  group: string;
+  role: 'owner' | 'editor' | 'viewer';
+}
 
 interface WorkspaceSettingsProps {
   model: Model;
+  connectors?: ConnectorConfig;
+  onConnectorsChange?: (config: ConnectorConfig) => void;
+  serverOrgId?: string | null;
+  onSetOrg?: (orgId: string | null) => void;
+  /** Present in server mode: loads and saves workspace members. */
+  membersManager?: {
+    load: () => Promise<{ members: MemberDraft[]; groupRoles: GroupRoleDraft[] }>;
+    save: (members: MemberDraft[], groupRoles: GroupRoleDraft[]) => Promise<void>;
+  } | null;
   onUpdate: (patch: Partial<Model>) => void;
   onBack: () => void;
   onDuplicate: () => void;
@@ -28,12 +50,63 @@ const PURPOSE_LABEL: Record<ModelPurpose, string> = {
 
 export default function WorkspaceSettings({
   model,
+  connectors = {},
+  onConnectorsChange,
+  serverOrgId,
+  onSetOrg,
+  membersManager = null,
   onUpdate,
   onBack,
   onDuplicate,
   onArchive,
   onDelete,
 }: WorkspaceSettingsProps) {
+  const t = useTranslation();
+  const [members, setMembers] = useState<MemberDraft[]>([]);
+  const [groupRoles, setGroupRoles] = useState<GroupRoleDraft[]>([]);
+  const [memberSubject, setMemberSubject] = useState('');
+  const [memberRole, setMemberRole] = useState<'owner' | 'editor' | 'viewer'>('editor');
+  const [groupRoleGroup, setGroupRoleGroup] = useState('');
+  const [groupRoleRole, setGroupRoleRole] = useState<'owner' | 'editor' | 'viewer'>('viewer');
+  const [membersStatus, setMembersStatus] = useState('');
+
+  useEffect(() => {
+    if (!membersManager) return;
+    let cancelled = false;
+    membersManager
+      .load()
+      .then((next) => {
+        if (cancelled) return;
+        setMembers(
+          (next.members ?? []).map((member) => ({
+            subject: member.subject,
+            role: member.role,
+            displayName: member.displayName,
+          })),
+        );
+        setGroupRoles(
+          (next.groupRoles ?? []).map((mapping) => ({ group: mapping.group, role: mapping.role })),
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) setMembersStatus(`Could not load members: ${error.message}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per manager instance
+  }, [membersManager]);
+
+  const saveMembers = async () => {
+    if (!membersManager) return;
+    setMembersStatus('');
+    try {
+      await membersManager.save(members, groupRoles);
+      setMembersStatus('Members updated');
+    } catch (error) {
+      setMembersStatus(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   const [name, setName] = useState(primaryText(model.name));
   const [description, setDescription] = useState(primaryText(model.documentation));
   const [owner, setOwner] = useState(model.owner ?? '');
@@ -79,7 +152,7 @@ export default function WorkspaceSettings({
           <button className="link-button" onClick={onBack}>
             ← All workspaces
           </button>
-          <h2>Workspace settings</h2>
+          <h2>{t('workspaceSettings')}</h2>
           <p>Metadata, domains, and lifecycle for this workspace.</p>
         </div>
         <div className="stat-inline">
@@ -91,7 +164,7 @@ export default function WorkspaceSettings({
 
       <div className="dashboard-grid">
         <section className="panel-card">
-          <h3>Identity</h3>
+          <h3>{t('identity')}</h3>
           <label className="field">
             Name
             <input
@@ -151,7 +224,7 @@ export default function WorkspaceSettings({
                 value={owner}
                 onChange={(event) => setOwner(event.target.value)}
                 onBlur={() => onUpdate({ owner: owner.trim() })}
-                placeholder="Accountable person"
+                placeholder={t('ownerLabel')}
               />
             </label>
             <label className="field">
@@ -176,7 +249,7 @@ export default function WorkspaceSettings({
 
         <section className="panel-card">
           <div className="section-heading">
-            <h3>Domains</h3>
+            <h3>{t('domainsHeading')}</h3>
             <button className="small-button" onClick={addDomain}>
               + Add domain
             </button>
@@ -211,7 +284,7 @@ export default function WorkspaceSettings({
                 </button>
               </li>
             ))}
-            {domains.length === 0 && <li className="empty">No domains yet.</li>}
+            {domains.length === 0 && <li className="empty">{t('noDomains')}</li>}
           </ul>
           {unassigned.length > 0 && (
             <label className="field">
@@ -230,10 +303,220 @@ export default function WorkspaceSettings({
           )}
         </section>
 
+        {onSetOrg && (
+          <section className="panel-card wide">
+            <h3>Organisation (server mode)</h3>
+            <div className="field-row">
+              <label className="field">
+                Org / tenant id
+                <input
+                  className="form-input full"
+                  placeholder="org-acme"
+                  defaultValue={serverOrgId ?? ''}
+                  onBlur={(event) => onSetOrg(event.target.value.trim() || null)}
+                />
+              </label>
+            </div>
+            <p className="muted">Scopes the workspace list with ?orgId= on the server.</p>
+          </section>
+        )}
+
         <section className="panel-card wide">
-          <h3>Lifecycle</h3>
+          <h3>{t('connectors')}</h3>
+          <p className="muted">
+            Link elements to Jira issues, Confluence pages, and ServiceNow CIs; publish views to
+            Confluence. The token is kept in this browser session only.
+          </p>
+          <div className="field-row">
+            <label className="field">
+              Jira base URL
+              <input
+                className="form-input full"
+                placeholder="https://company.atlassian.net"
+                value={connectors.jiraBaseUrl ?? ''}
+                onChange={(event) => onConnectorsChange?.({ ...connectors, jiraBaseUrl: event.target.value || undefined })}
+              />
+            </label>
+            <label className="field">
+              Confluence base URL
+              <input
+                className="form-input full"
+                placeholder="https://company.atlassian.net/wiki"
+                value={connectors.confluenceBaseUrl ?? ''}
+                onChange={(event) => onConnectorsChange?.({ ...connectors, confluenceBaseUrl: event.target.value || undefined })}
+              />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              ServiceNow instance URL
+              <input
+                className="form-input full"
+                placeholder="https://company.service-now.com"
+                value={connectors.serviceNowUrl ?? ''}
+                onChange={(event) => onConnectorsChange?.({ ...connectors, serviceNowUrl: event.target.value || undefined })}
+              />
+            </label>
+            <label className="field">
+              API token (session only)
+              <input
+                className="form-input full"
+                type="password"
+                autoComplete="off"
+                value={connectors.token ?? ''}
+                onChange={(event) => onConnectorsChange?.({ ...connectors, token: event.target.value || undefined })}
+              />
+            </label>
+          </div>
+        </section>
+
+        {membersManager && (
+          <section className="panel-card wide">
+            <h3>{t('members')}</h3>
+            <table className="relation-list">
+              <tbody>
+                {members.map((member, index) => (
+                  <tr key={member.subject + index}>
+                    <td>
+                      <input
+                        className="form-input"
+                        value={member.subject}
+                        aria-label={t('subject')}
+                        onChange={(event) => {
+                          const next = [...members];
+                          next[index] = { ...member, subject: event.target.value };
+                          setMembers(next);
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={member.role}
+                        onChange={(event) => {
+                          const next = [...members];
+                          next[index] = { ...member, role: event.target.value as MemberDraft['role'] };
+                          setMembers(next);
+                        }}
+                      >
+                        <option value="owner">owner</option>
+                        <option value="editor">editor</option>
+                        <option value="viewer">viewer</option>
+                      </select>
+                    </td>
+                    <td>
+                      <button
+                        className="small-button"
+                        onClick={() => setMembers(members.filter((_, i) => i !== index))}
+                      >
+                        {t('remove')}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="field-row">
+              <input
+                className="form-input"
+                placeholder={t('subject')}
+                value={memberSubject}
+                onChange={(event) => setMemberSubject(event.target.value)}
+              />
+              <select value={memberRole} onChange={(event) => setMemberRole(event.target.value as MemberDraft['role'])}>
+                <option value="owner">owner</option>
+                <option value="editor">editor</option>
+                <option value="viewer">viewer</option>
+              </select>
+              <button
+                className="small-button"
+                disabled={!memberSubject.trim()}
+                onClick={() => {
+                  setMembers([...members, { subject: memberSubject.trim(), role: memberRole }]);
+                  setMemberSubject('');
+                }}
+              >
+                {t('addMember')}
+              </button>
+            </div>
+            <h4>{t('checkWaivers')}</h4>
+            <table className="relation-list">
+              <tbody>
+                {groupRoles.map((mapping, index) => (
+                  <tr key={mapping.group + index}>
+                    <td>
+                      <input
+                        className="form-input"
+                        value={mapping.group}
+                        aria-label={t('subject')}
+                        onChange={(event) => {
+                          const next = [...groupRoles];
+                          next[index] = { ...mapping, group: event.target.value };
+                          setGroupRoles(next);
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={mapping.role}
+                        onChange={(event) => {
+                          const next = [...groupRoles];
+                          next[index] = { ...mapping, role: event.target.value as GroupRoleDraft['role'] };
+                          setGroupRoles(next);
+                        }}
+                      >
+                        <option value="owner">owner</option>
+                        <option value="editor">editor</option>
+                        <option value="viewer">viewer</option>
+                      </select>
+                    </td>
+                    <td>
+                      <button
+                        className="small-button"
+                        onClick={() => setGroupRoles(groupRoles.filter((_, i) => i !== index))}
+                      >
+                        {t('remove')}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="field-row">
+              <input
+                className="form-input"
+                placeholder="admins-group"
+                value={groupRoleGroup}
+                onChange={(event) => setGroupRoleGroup(event.target.value)}
+              />
+              <select value={groupRoleRole} onChange={(event) => setGroupRoleRole(event.target.value as GroupRoleDraft['role'])}>
+                <option value="owner">owner</option>
+                <option value="editor">editor</option>
+                <option value="viewer">viewer</option>
+              </select>
+              <button
+                className="small-button"
+                disabled={!groupRoleGroup.trim()}
+                onClick={() => {
+                  setGroupRoles([...groupRoles, { group: groupRoleGroup.trim(), role: groupRoleRole }]);
+                  setGroupRoleGroup('');
+                }}
+              >
+                {t('addWaiver')}
+              </button>
+            </div>
+            <div className="settings-actions">
+              <button className="primary-button" onClick={() => void saveMembers()}>
+                {t('save')}
+              </button>
+              <span className="muted">{membersStatus}</span>
+            </div>
+          </section>
+        )}
+
+        <section className="panel-card wide">
+          <h3>{t('lifecycle')}</h3>
           <div className="settings-actions">
-            <button onClick={onDuplicate}>Duplicate workspace</button>
+            <button onClick={onDuplicate}>{t('duplicateWorkspace')}</button>
             <button onClick={onArchive} disabled={model.status === 'archived'}>
               Archive workspace
             </button>

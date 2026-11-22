@@ -12,6 +12,7 @@
   "dependencies": {
     "@openarch/ai": "*",
     "@openarch/core": "*",
+    "@openarch/exporters": "*",
     "@openarch/repository": "*"
   },
   "devDependencies": {

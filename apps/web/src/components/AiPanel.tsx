@@ -5,7 +5,7 @@ import {
   serializeAoef,
   type Model,
 } from '@openarch/core';
-import { modelToMarkdown, renderPrompt, validateAiModel } from '@openarch/ai';
+import { modelToMarkdown, renderPrompt, sanitizeAiText, validateAiModel } from '@openarch/ai';
 import { parseNativeModel } from '@openarch/repository';
 import { useMemo, useState } from 'react';
 
@@ -63,7 +63,9 @@ export default function AiPanel({ model, onReplaceModel, onAddModel }: AiPanelPr
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const context = useMemo(() => modelToMarkdown(model), [model]);
+  // Invariant 7: model text is untrusted — carry the SAFETY_PREFIX marker
+  // whenever the context leaves the app (including the copy-out textarea).
+  const context = useMemo(() => sanitizeAiText(modelToMarkdown(model)), [model]);
 
   const buildPrompt = () => {
     const rendered = renderPrompt('model_from_description', {

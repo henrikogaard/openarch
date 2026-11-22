@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#2563eb"/>
+  <g stroke="#ffffff" stroke-width="14" fill="none">
+    <rect x="96" y="120" width="130" height="70" rx="8"/>
+    <rect x="286" y="120" width="130" height="70" rx="8"/>
+    <rect x="96" y="330" width="130" height="70" rx="8"/>
+    <rect x="286" y="330" width="130" height="70" rx="8"/>
+    <path d="M226 155h60M351 190v140M226 365h60M161 190v140"/>
+  </g>
+  <text x="256" y="278" font-family="system-ui, sans-serif" font-size="120" font-weight="700" fill="#ffffff" text-anchor="middle">OA</text>
+</svg>

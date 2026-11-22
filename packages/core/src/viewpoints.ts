@@ -16,9 +16,9 @@ export const VIEWPOINTS: ViewpointDefinition[] = [
   { id: 'stakeholder', label: 'Stakeholder', description: 'Stakeholders, drivers, goals, and assessments.', elementTypes: ['Stakeholder', 'Driver', 'Assessment', 'Goal', 'Outcome', 'Value'] },
   { id: 'organization', label: 'Organization', description: 'Actors, roles, and organizational structure.', layers: ['business'], kinds: ['active', 'composite'] },
   { id: 'business-process', label: 'Business Process', description: 'Business processes and their relationships.', elementTypes: ['BusinessProcess', 'BusinessActor', 'BusinessRole', 'BusinessObject'] },
-  { id: 'business-function', label: 'Business Function', description: 'Business functions and the units performing them.', elementTypes: ['BusinessFunction', 'BusinessActor', 'BusinessRole', 'BusinessComponent', 'BusinessUnit' as string] },
+  { id: 'business-function', label: 'Business Function', description: 'Business functions and the units performing them.', elementTypes: ['BusinessFunction', 'BusinessActor', 'BusinessRole', 'BusinessComponent', 'BusinessCollaboration'] },
   { id: 'business-interaction', label: 'Business Interaction', description: 'Interactions between business roles and actors.', elementTypes: ['BusinessInteraction', 'BusinessActor', 'BusinessRole', 'BusinessInterface'] },
-  { id: 'business-event', label: 'Business Event Processing', description: 'Events that trigger business behavior.', elementTypes: ['BusinessEvent', 'BusinessProcess', 'BusinessFunction', 'BusinessInteraction', 'Triggering' as string] },
+  { id: 'business-event', label: 'Business Event Processing', description: 'Events that trigger business behavior.', elementTypes: ['BusinessEvent', 'BusinessProcess', 'BusinessFunction', 'BusinessInteraction'] },
   { id: 'business-product', label: 'Business Product', description: 'Products and their composition.', elementTypes: ['Product', 'BusinessService', 'BusinessObject', 'Representation'] },
   { id: 'business-service', label: 'Business Service', description: 'Services offered to customers and partners.', elementTypes: ['BusinessService', 'BusinessRole', 'BusinessActor', 'BusinessInterface'] },
   { id: 'application-usage', label: 'Application Usage', description: 'Applications and the business functions they support.', layers: ['business', 'application'], kinds: ['active', 'behavior', 'passive'] },
@@ -26,7 +26,7 @@ export const VIEWPOINTS: ViewpointDefinition[] = [
   { id: 'application-structure', label: 'Application Structure', description: 'Internal structure of an application.', layers: ['application'], kinds: ['active', 'behavior', 'passive'] },
   { id: 'application-service', label: 'Application Service', description: 'Application services and their consumers.', elementTypes: ['ApplicationService', 'ApplicationInterface', 'ApplicationComponent', 'BusinessService', 'BusinessProcess'] },
   { id: 'technology', label: 'Technology', description: 'Technology elements supporting applications.', layers: ['technology'] },
-  { id: 'infrastructure', label: 'Infrastructure', description: 'Nodes, devices, systems software, and artifacts.', elementTypes: ['Node', 'Device', 'SystemSoftware', 'Artifact', 'Network' as string] },
+  { id: 'infrastructure', label: 'Infrastructure', description: 'Nodes, devices, systems software, and networks.', elementTypes: ['Node', 'Device', 'SystemSoftware', 'Artifact', 'CommunicationNetwork'] },
   { id: 'physical', label: 'Physical', description: 'Facilities, equipment, and materials.', layers: ['physical'] },
   { id: 'information', label: 'Information', description: 'Business objects, data objects, and artifacts.', elementTypes: ['BusinessObject', 'DataObject', 'Artifact', 'Meaning', 'Representation'] },
   { id: 'motivation', label: 'Motivation', description: 'Why the architecture is what it is.', layers: ['motivation'] },
@@ -79,9 +79,17 @@ export function filterModelByViewpoint(model: Model, viewpointId: string): Model
         nodeIds.has(edge.target) &&
         relationshipIds.has(edge.relationshipRef),
     );
-    return { ...view, nodes, edges };
+    // Children of pruned containers keep absolute bounds; promote them.
+    const keptIds = new Set(nodes.map((node) => node.id));
+    const cleanNodes = nodes.map((node) =>
+      node.parentId && !keptIds.has(node.parentId) ? { ...node, parentId: undefined } : node,
+    );
+    return { ...view, nodes: cleanNodes, edges };
   });
 
+  // Shallow copy sharing the original element objects: a read-only projection.
+  // Mutating `elements` here does not mutate the source, but mutating an
+  // element object would — callers must treat the result as read-only.
   return { ...structuredClone(model), elements, relationships, views };
 }
 

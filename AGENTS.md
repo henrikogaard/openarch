@@ -41,7 +41,8 @@ options — never forked metamodels.
 - **135 tests** across 16 files; typecheck and build pass; 0 dependency vulnerabilities.
 - **8 packages**: `core`, `ai`, `enrichment`, `iac`, `archi`, `reporting`, `repository`, `exporters`.
 - **4 apps**: `web` (React + XYFlow), `server` (Fastify), `cli`, `mcp`.
-- **Working tree is uncommitted.** Only the initial commit exists. See §10 before transferring.
+- **Committed and pushed** (`8c45f61` on `origin/main`). New work goes on a named feature branch
+  in its own worktree under `.claude/worktrees/` (git-ignored). See §10 before transferring.
 - Servers may be running on `:5173` (Vite) and `:8080` (API + built app).
 
 Shipped: workspaces, domains, environments, editor, magic connector, **stakeholder viewpoints with
@@ -158,7 +159,8 @@ Helpers live in `packages/core/src/workspace.ts` (`filterModelByDomain`, `domain
 ## 8. Testing
 
 ```bash
-npm test                 # 135 tests: unit, XSD conformance, server integration, UI render
+npm test                 # unit, XSD conformance, server integration, UI render (vitest)
+npm run test:e2e         # Playwright smoke test against the dev server on :5173
 npm run typecheck
 npm run build
 ```
@@ -167,7 +169,9 @@ npm run build
 - **Server integration** boots the real server on a random port and exercises auth/RBAC/locking/
   import/approvals.
 - **UI tests** use jsdom and render analysis components; they do **not** click the canvas.
-- **No E2E tests yet.** Adding Playwright is task 3 in the status document.
+- **E2E** uses Playwright (`npm run test:e2e`, config `playwright.config.ts`, specs in `e2e/`):
+  create → add → connect → bulk-assign → delete → reload → export AOEF against the dev server on
+  `:5173`. Runs in CI after `npx playwright install --with-deps chromium`.
 
 When fixing a bug, add a regression test. When changing the metamodel, update
 `packages/core/src/extended.test.ts`.
@@ -176,9 +180,11 @@ When fixing a bug, add a regression test. When changing the metamodel, update
 
 ## 9. Known gotchas
 
-1. **Canvas deletion is not wired to the model.** `Canvas.tsx` has no `onNodesDelete` /
-   `onEdgesDelete`. Fix this before trusting delete.
-2. **No autosave.** Saving is explicit.
+1. ~~Canvas deletion not wired to the model.~~ Fixed: `onNodesDelete`/`onEdgesDelete` in
+   `Canvas.tsx` remove elements/relationships from the model via `removeElements` /
+   `removeRelationships` in `packages/core/src/workspace.ts` (tests: `workspace-editing.test.ts`).
+2. ~~No autosave.~~ Fixed: debounced autosave (1.5 s) with a saved/unsaved badge in `App.tsx`;
+   explicit Save still available.
 3. **`.archimate` is best-effort** — icons/styling are dropped.
 4. **IaC mapping is heuristic** — review before applying.
 5. **OIDC is unit-tested, not live-tested.**
@@ -196,7 +202,9 @@ When fixing a bug, add a regression test. When changing the metamodel, update
 
 ## 10. Transferring to another computer
 
-The working tree is uncommitted. Choose one:
+`main` is committed and pushed (`origin` = GitHub). For new work, branch in a worktree under
+`.claude/worktrees/` (git-ignored) and open a PR. If a clone ever ends up with only the initial
+commit, recover from a bundle:
 
 ```bash
 # Option A — commit and push (preferred)
@@ -226,14 +234,18 @@ After transfer: `npm install && npm test && npm run dev`.
 
 ## 11. First task
 
-Follow the two-week sprint in `docs/status-2026-11-17.md` §5. Start with:
+Follow the two-week sprint in `docs/status-2026-11-17.md` §5 and the drawing-depth track
+(Phase 7A) in `docs/roadmap.md` §12. Done already: commit/push (`8c45f61`), canvas delete synced
+to the model, multi-select + bulk assign, autosave, error boundary, Playwright E2E (branch
+`feat/drawing-depth-trust`). Next:
 
-1. **Commit and push** (blocking).
-2. **Fix canvas delete** — add `onNodesDelete`/`onEdgesDelete` that remove the element/relationship
-   from the model via `commit`, and add a test.
-3. **Multi-select + bulk domain/environment assignment.**
-4. **Autosave + error boundary.**
-5. **Playwright smoke test**: create workspace → add element → connect → save → export AOEF.
+1. **Remaining Phase 6/7 polish**: full i18n sweep of remaining screens, deeper accessibility
+   audit, cross-workspace global search (`docs/roadmap.md` §9–10). E2E helpers in `e2e/helpers.ts`.
+2. **Phase 2–5 stragglers, then Phase 8 enterprise** (C4 bridge, ArchiMate 4.0, value streams,
+   connectors, OIDC end-to-end, governance UI) — roadmap says these come after trust/stickiness.
+(Done on `feat/drawing-depth-trust`: Phase 7A drawing depth ✅, autosave + error boundary + E2E,
+version history + conflict UI, schema migration, backup-all, dark mode, bundle split,
+⌘K palette, IaC drift, Git-native workspaces, onboarding.)
 
 **Definition of done for this sprint:** a new user can create a workspace, draw and connect
 elements, delete them, bulk-assign a domain, reload without losing work, and export a valid AOEF
@@ -257,7 +269,10 @@ file — with an E2E test proving it.
 
 - Do not replace the document model with a SQL schema.
 - Do not add a CMDB/ITSM or a full TOGAF process engine.
-- Do not add real-time CRDT editing.
+- Tier-2 multi-user editing goes through the **validated op log** (ADR 0004): every operation
+  is validated before it enters the shared history, and a CRDT requires a validation-first
+  ADR first (reject-path or merge-repair, snapshot compatibility, undo story). Real-time
+  *awareness* (presence/focus/comment/save hub) is unrestricted; ops stay on validated paths.
 - Do not make a server mandatory for local use.
 - Do not bypass metamodel validation for AI writes.
 - Do not chase Gartner-MQ feature parity.

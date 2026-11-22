@@ -19,5 +19,6 @@ export interface Proposal {
 /** The outcome of running the enrichment pipeline over a set of resources. */
 export interface EnrichmentResult {
   proposals: Proposal[];
+  /** Resources whose key or name matched an existing element (deduped). */
   skipped: number;
 }

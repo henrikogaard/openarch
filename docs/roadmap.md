@@ -262,24 +262,26 @@ tools retain the information; AOEF import maps them back.
 | **5** | **Scale & ecosystem** | OIDC/SCIM, Jira/Confluence, CMDB read-only, standards packs, multi-workspace portfolio, marketplace | Enterprise deployment and ecosystem |
 | **6** | **Trust & daily use** | Autosave, error boundary, version history + restore, conflict UI, E2E tests, i18n completion, accessibility, performance, bundle splitting | A tool people trust with real work every day |
 | **7** | **Workflow stickiness** | IaC drift detection, Git-native workspaces, command palette, global search, bulk edit, onboarding, dark mode | A tool people reopen every week |
+| **7A** | **Drawing depth** (runs alongside 6–7) | Canvas delete synced to the model, multi-select + bulk assign, copy/paste/duplicate, align/distribute, snap-to-grid, bendpoints, on-canvas labels, containers, z-order, context menu, palette drag-and-drop, presentation mode — see §12 | The canvas feels like a dedicated diagramming tool, not a form |
 | **8** | **Enterprise & ecosystem** | OIDC end-to-end, governance UI, DOCX/PPTX/Confluence reporting, Jira/Confluence/CMDB connectors, SCIM, value streams, C4 bridge, ArchiMate 4.0, marketplace | A platform an organisation can standardise on |
 
 Phases 2 and 3 can run in parallel; Phase 4 depends on Phase 1 (workspaces, domains, baselines).
-Phases 6 and 7 should run before more Phase 8 breadth: trust and repeat use matter more than
-another connector.
+Phases 6, 7, and 7A should run before more Phase 8 breadth: trust, repeat use, and drawing depth
+matter more than another connector.
 
 ### Implementation status (2026-11-17)
 
 | Phase | Status | Shipped | Still open |
 |---|---|---|---|
 | **1. Workspaces & domains** | ✅ Done | Workspace home, create/duplicate/archive/delete, purpose/status/owner/tags, templates, deep links, domain registry, element domain/environment, domain filters, domain map, ADR/requirement/principle artefacts, workspace settings, portfolio dashboard, **stakeholder viewpoints with L1–L4 granulation, dependency depth, expandable detail, and configurable attributes** | — |
-| **2. Project & infrastructure** | 🟡 Mostly done | Terraform/Kubernetes/docker-compose import, environment overlays, deployment view, interface catalogue, `openarch check`, infrastructure templates | C4/Structurizr bridge, cloud icon packs |
-| **3. Archi/ArchiMate depth** | 🟡 Partial | `.archimate` import/export (ZIP), AOEF conformance, viewpoints library | ArchiMate 4.0 registry, Git sync UI, merge review UI, scripting sandbox |
-| **4. TOGAF & enterprise** | 🟡 Mostly done | TOGAF Architecture Vision template, capability tree, portfolio fields + TIME, baseline approvals, Markdown/HTML reports, OIDC/RS256 via JWKS, standards packs, SIEM webhook | Value-stream view, DOCX/PPTX/Confluence publishing, Jira/Confluence connectors, CMDB, SCIM |
-| **5. Scale & ecosystem** | 🟡 Partial | Cross-workspace portfolio, templates gallery | Marketplace, SCIM, multi-tenant hierarchy |
-| **6. Trust & daily use** | ⏳ Planned | — | Autosave, error boundary, version history, conflict UI, E2E, i18n, accessibility, performance |
-| **7. Workflow stickiness** | ⏳ Planned | — | IaC drift, Git-native workspaces, command palette, search, bulk edit, onboarding |
-| **8. Enterprise & ecosystem** | ⏳ Planned | — | OIDC end-to-end, governance UI, reporting, connectors, SCIM, value streams, C4, ArchiMate 4.0 |
+| **2. Project & infrastructure** | ✅ Done | Terraform/Kubernetes/docker-compose import, environment overlays, deployment view, interface catalogue, `openarch check`, infrastructure templates, **C4/Structurizr bridge (import/export/CLI)**, **cloud icon packs (view styling)** | — |
+| **3. Archi/ArchiMate depth** | ✅ Done for now | `.archimate` I/O, AOEF conformance, viewpoints, versioned metamodel registry (3.2 default), Git-native workspaces UI, merge-into-current on import, sandboxed scripting + CLI `script` | Full 4.0 metamodel deltas (awaiting the spec) |
+| **4. TOGAF & enterprise** | ✅ Mostly done | TOGAF template, capability tree, portfolio + TIME, baseline approvals, Markdown/HTML/DOCX/PPTX reports, value-stream view, OIDC/RS256 (JWKS e2e-tested), standards packs, SIEM webhook, Jira/Confluence/ServiceNow links + Confluence publish | Scheduled Confluence publish |
+| **5. Scale & ecosystem** | 🟡 Done except marketplace | Cross-workspace portfolio, templates gallery, SCIM 2.0 Users API, multi-tenant org scoping | Marketplace — deliberately not started (adoption gate, AGENTS.md §13) |
+| **6. Trust & daily use** | 🟡 In progress | Autosave + saved/unsaved badge, per-tab error boundary, Playwright E2E (6 specs, CI), save-time validation warning, dark mode, bundle split (797→190 KB initial), 2k-element perf smoke, version history + restore, 409 conflict dialog, schema migration, backup-all, i18n for editor/palette UI, a11y quick pass | Full i18n sweep of remaining screens, deeper accessibility audit |
+| **7. Workflow stickiness** | 🟡 In progress | Bulk edit, command palette + search (⌘K), dark mode, IaC drift detection + apply, Git-native workspaces (GitHub store), onboarding dialog | Full cross-workspace global search, sample gallery tour |
+| **7A. Drawing depth** | ✅ Done (anchored comments remain) | Canvas delete synced to the model, multi-select + bulk assign, copy/paste/duplicate, align/distribute, snap-to-grid, on-canvas rename, context menu + shortcuts, edge bendpoints/reconnect, grouping, z-order, palette drag-and-drop, presentation mode — 5 E2E specs green | Comments anchored to elements |
+| **8. Enterprise & ecosystem** | 🟡 In progress | OIDC RS256 e2e-tested (local JWKS), governance UI (approvals, baseline, waivers), connectors, SCIM, org scoping, C4 bridge | Group→role mapping UI, invite/remove members UI, scheduled reporting |
 
 The remaining items in Phases 2–5 are integration-heavy (external systems) or require a larger
 design (ArchiMate 4.0 registry, Git sync UX). Phases 6–8 are specified below.
@@ -337,8 +339,11 @@ E2E suite covers the core flow; the bundle is split; all new strings are transla
    resource, drift badge on the workspace card, and `openarch iac diff --fail-on drift`.
 2. **Git-native workspaces** — open a folder or GitHub repo, save
    `architecture/<workspace>.json`, commit/push, and pull with a diff preview.
-3. **Command palette** — ⌘K across workspaces, domains, elements, views, and actions.
-4. **Global search** — search across every workspace.
+3. ~~**Command palette** — ⌘K across workspaces, domains, elements, views, and actions.~~ ✅
+   `CommandPalette` (fuzzy, arrow/enter/esc); element search covers the open model, workspace
+   search switches workspaces.
+4. **Global search** — search across every workspace (palette covers the open model + workspace
+   names today).
 5. **Bulk edit** — multi-select, assign domain/environment, add properties.
 6. **Drawing polish** — copy/paste/duplicate, align/distribute, snap, bendpoints, on-canvas
    labels, containers, context menu, and keyboard shortcuts.
@@ -369,7 +374,49 @@ link elements to delivery work.
 
 ---
 
-## 12. Compatibility strategy
+## 12. Phase 7A detail — drawing depth (active priority)
+
+**Goal:** the canvas feels like a dedicated diagramming tool. The status document
+(`docs/status-2026-11-17.md` §3.A) calls this the biggest remaining gap: the biggest gap is no
+longer features — it is drawing depth.
+
+Already shipped on `feat/drawing-depth-trust`:
+
+1. **Delete synced to the model** — `onNodesDelete`/`onEdgesDelete` resolve node/edge ids to
+   element/relationship refs and remove them via `removeElements`/`removeRelationships`
+   (`packages/core/src/workspace.ts`), which also prune view nodes/edges, touching relationships,
+   and artefact links. Regression tests in `workspace-editing.test.ts`.
+2. **Multi-select + bulk actions** — Shift-click multi-select, Delete/Backspace removes the
+   selection, and a selection bar bulk-assigns domain/environment to all selected elements.
+3. **Autosave** — debounced save 1.5 s after the last edit, saved/unsaved badge in the top bar
+   (Phase 6 item 1).
+4. **Error boundary per tab** — a render error shows a recoverable panel; the model stays in
+   memory (Phase 6 item 2).
+
+Remaining, in order:
+
+5. ~~Copy/paste/duplicate (clipboard of element subgraphs, including internal relationships).~~
+   ✅ `duplicateElements` (core) + ⌘/Ctrl+C/V/D in the editor; `e2e/duplicate.spec.ts`.
+6. ~~Align/distribute (left/center/right/top/middle/bottom, horizontal/vertical distribute).~~
+   ✅ `alignNodes`/`distributeNodes` (core) + Align/Distribute menus in the selection bar.
+7. ~~Snap-to-grid~~ ✅ 20 px snap with a Snap toggle in the view bar (plus an initial-fit fix,
+   code-review finding #7).
+8. ~~Edge bendpoints and reconnection~~ ✅ bendable polyline edges (double-click to add a
+   bendpoint, drag to move), edge-end reconnection validated against the metamodel.
+9. ~~On-canvas label editing~~ ✅ double-click a node to rename inline.
+10. ~~Containers/nested nodes, z-order controls~~ ✅ Group/Ungroup (Grouping element + Group
+    view node) and Front/Back z-order in the selection bar.
+11. ~~Context menu + keyboard shortcuts~~ ✅ right-click node/pane menu; ⌘/Ctrl+C/V/D, Delete,
+    documented in the canvas hint. ~~Drag-and-drop from the palette~~ ✅ HTML5 drag onto canvas.
+12. Comments anchored to elements; ~~presentation mode~~ ✅ chrome-free canvas, Esc to exit.
+
+**Definition of done:** a new user can create a workspace, draw and connect elements, delete them,
+bulk-assign a domain, reload without losing work, and export a valid AOEF file — with an E2E test
+proving it, and the diagram survives a round-trip looking the way the user left it.
+
+---
+
+## 13. Compatibility strategy
 
 | Concern | Decision |
 |---|---|
@@ -382,7 +429,7 @@ link elements to delivery work.
 
 ---
 
-## 13. Success metrics
+## 14. Success metrics
 
 | Tier | Metric | Target |
 |---|---|---|
@@ -399,7 +446,7 @@ link elements to delivery work.
 
 ---
 
-## 14. Risks and decisions
+## 15. Risks and decisions
 
 | Risk | Mitigation |
 |---|---|
@@ -408,12 +455,113 @@ link elements to delivery work.
 | **Domains become a second metamodel** | Domains are a property + registry, not element types. |
 | **AOEF compatibility vs rich metadata** | Rich metadata in native JSON; only AOEF-safe properties cross the boundary. |
 | **Scope creep into CMDB/ITSM** | Integrate read-only; never replace ServiceNow. |
-| **Real-time collaboration** | Not planned. Async collaboration + optimistic locking + baselines covers the target teams. |
+| **Real-time collaboration** | Tier-2 ships the validated op log (ADR 0004); a CRDT needs a validation-first ADR (reject/repair path, snapshot compatibility, undo story). Structural conflicts fall back to the three-way review. |
 | **Performance on large models** | Domain filtering, view scoping, and virtualised lists; measure at 2,000+ elements. |
 
 ---
 
-## 15. Immediate backlog
+
+## 17. Enhancement round (2026-11-19) — review-driven UX, features, engineering
+
+Everything below shipped after the full-codebase review fix-up, closing the "what's next"
+suggestions end-to-end:
+
+**UX** — shortcut cheatsheet (`?`) with a single-source registry; focus traps + focus restore
+in every modal; skip-to-content link; `prefers-reduced-motion` and visible focus policy;
+three-pane conflict review (per-entity changed/only-yours/only-theirs + semantic merge),
+replacing the two-button overwrite dialog; labelled undo timeline scrubber (◷); presentation
+mode gains ←/→ view switching, `F` fullscreen and a HUD.
+
+**Features** — deterministic auto-layout engine (`layoutView`: grid + layered) exposed in the MCP
+(`auto_layout_view`); requirement traceability + uncovered report and migration timeline
+analysis tabs (Plateau/WorkPackage/Deliverable with date ordering); scenario compare on
+Portfolio (overlap score + changed/new/dropped census); draw.io import (mxfile/mxGraphModel →
+elements + positioned view, actor-shape heuristic, auto-scaling, dangling-edge warnings) in web
++ CLI; crash journal (IndexedDB mirror of in-progress edits with recovery on next open);
+PWA shell (manifest + service worker, cache-first static, API never cached); member management
+UI + group→role mapping (Settings section, owner-only endpoints, always ≥1 owner guard).
+
+**Engineering** — server `GET /api/models?summary=1` pagination (client uses it); LocalRepository
+summary index (home screen no longer deserializes every model); AI context index-building
+(O(E·V) → O(n)); full i18n sweep of Collaborate/ViewDesigner/Inspector/Dashboard/
+ImportPreview/GitConfigDialog/Onboarding (~80 new EN/NB pairs); `openarch iac diff … --fail-on
+drift` CI gate; GitHub listing 403 explained (1000-file cap); ACF fidelity (multi-language
+property values round-trip); enrichment upsert de-duplication + deterministic id
+disambiguation; bundle budget CI step (eager JS < 1.45 MB — currently 850 KiB);
+server-mode E2E in CI caught and pinned two real bugs (deep-link mode loss, loopback CORS).
+
+MCP tool count: 41 (auto_layout_view, get_validation_issues, render_view_svg added).
+
+
+## 18. "Build what's not built" round (2026-11-19 evening) — closing the remaining backlog
+
+Deliberately unbuilt (hard rules, not bugs): CRDT real-time editing (AGENTS §13), CMDB/ITSM
+replacement (§13), marketplace before adoption (§13), ArchiMate 4.0 element deltas (awaiting the
+official spec; the registry mechanics from ADR-0003 are in place).
+
+Everything else that was listed as "not built" is now built:
+
+- **Security/audit**: `npm audit` = **0 vulnerabilities** (prod+dev) — the image-size ReDoS
+  (via pptxgenjs) pinned to the patched 2.0.4 with a clean lockfile.
+- **Conflict review**: per-entity Mine/Theirs resolution (core `applyResolutions` + UI buttons,
+  "Skip" for incoming additions) on top of the semantic merge — full three-way review flows.
+- **Canvas**: 💬 comment pins anchored to elements (server comments rendered as node badges).
+- **Print/PDF**: `@media print` stylesheet (browser print = clean one-page view).
+- **Catalogue at scale**: content-visibility rows — constant render cost at 10k+ elements.
+- **Sample gallery**: live SVG template previews in the New-workspace dialog.
+- **Scheduled Confluence publishing**: `openarch publish-confluence` CLI (cron-able, tested).
+- **Docker**: multi-stage image + .dockerignore + compose incl. a Keycloak profile for live
+  OIDC; CI Docker build smoke; dedicated docker+release workflows (tags → ghcr images).
+- **Community**: CONTRIBUTING.md, SECURITY.md (threat model), bug/feature issue templates,
+  discussions config, CHANGELOG.md.
+- **Release process**: tag-triggered workflow (changelog-section → GitHub Release → image).
+- **Docs site**: zero-dependency single-page builder (`scripts/build-docs.mjs`) + Pages
+  workflow; 12 modules; built locally (site-dist).
+- **`npx openarch`**: publishable `packages/cli` — self-contained esbuild bundle (verified
+  validate/convert/doctor/.drawio against the artifact) + `npm pack` smoke (4-file tarball).
+- **OIDC live**: opt-in live-Keycloak verification test (skips without env).
+
+
+## 19. Real-time collaboration (2026-11-19) — awareness, not CRDT
+
+Why not CRDT (roadmap §14's original call): the model is a strongly constrained graph — every
+write must pass `validateModel` and views must stay faithful projections. CRDTs guarantee
+*convergence*, not *validity*: merging "delete element" with "edit its relationship" produces a
+dangling reference, and CRDTs have no reject-path. Layering validation over convergence (plus our
+undo stack, raw-XML passthrough, snapshot history) is where such projects go to die. Concurrent
+structural edits are genuinely rare in the target teams (2–10 people, sporadic edits) and are
+already resolved by optimistic locking + the three-way review.
+
+What shipped instead:
+
+1. **Identity**: the web app attaches a per-tab access token (sessionStorage; prompt on first
+   server-mode switch) to every REST call — static tokens, HS256 JWTs, and OIDC-issued tokens
+   all work; the token maps to the member's subject for presence display.
+2. **Real-time hub** (`apps/server/src/collab.ts` + `GET /api/models/:id/rt` WebSocket):
+   authenticated (member-checked), per-workspace rooms providing:
+   - **Presence**: who has the workspace open (join/leave/live badge in the top bar).
+   - **Focus awareness**: "who is looking at what element", relayed from canvas selection.
+   - **Live comments**: comment posts broadcast to everyone in the room.
+   - **Save notifications**: revision bumps / restores by *other* members surface instantly
+     (before their next save hits the 409 path).
+   All writes still go through the validated REST path — the socket is a read-only relay by
+   design (invariant 6 untouched). Stranger connections are closed with 4403.
+3. **Integration tests** cover the full flow: two authenticated sockets, presence updates,
+   focus relay, comment + save broadcasts, and non-member rejection.
+
+If concurrent *field-level* co-editing ever becomes a real need, the staged path is: (1) prove
+this awareness layer insufficient for actual team workflows, (2) design an OT (server-authoritative
+operation log) layer that validates every operation — a CRDT remains the wrong tool here.
+
+## 20. Multi-user epic — implementation spec (2026-11-20)
+
+The full build-ready plan for tiers 1–3, login/OTP, invites, mail, the op-log collaboration
+engine, folder storage, and backup/restore lives in **`docs/multi-user-spec.md`** (PR-by-PR
+with API contracts, data formats, test gates, and sequencing). Design rationale stays in
+`docs/multi-user-plan.md` §8–§12; the engine decision is ADR 0004. Implementation follows the
+spec's §9 order, starting with the parity runner + owner bootstrap.
+
+## 16. Immediate backlog
 
 | Order | Item | Phase | Status |
 |---|---|---|---|
@@ -427,12 +575,24 @@ link elements to delivery work.
 | 8 | IaC import (Terraform + Kubernetes + compose) | 2 | ✅ |
 | 9 | Environment overlays | 2 | ✅ |
 | 10 | `openarch check` + PR workflow | 2 | ✅ |
-| 11 | C4 / Structurizr bridge | 2 | Next |
-| 12 | ArchiMate 4.0 registry | 3 | Next |
-| 13 | Git sync UI (clone/pull/commit/push) | 3 | Next |
-| 14 | Value-stream view | 4 | Next |
-| 15 | DOCX/PPTX and Confluence publishing | 4 | Later |
-| 16 | Jira / Confluence / ServiceNow connectors | 4–5 | Later |
+| 11 | Canvas delete synced to model + multi-select bulk assign | 7A | ✅ `feat/drawing-depth-trust` |
+| 12 | Autosave + saved/unsaved badge + per-tab error boundary | 6 | ✅ `feat/drawing-depth-trust` |
+| 13 | Playwright E2E: create → add → connect → bulk-assign → delete → reload → export AOEF | 6/7A | ✅ `e2e/smoke.spec.ts`, runs in CI |
+| 14 | Drawing polish (bendpoints, labels, containers, z-order, palette drag, presentation ✅) | 7A | ✅ |
+| 15 | Containers, z-order, context menu, palette drag-and-drop, presentation mode | 7A | Later |
+| 16 | C4 / Structurizr bridge (packages/c4, CLI + web import/export) | 2 | ✅ |
+| 17 | ArchiMate 4.0 registry mechanics (versioned registry; 4.0 deltas pending the spec) | 3 | 🟡 registry ✅, 4.0 deltas later |
+| 18 | Git sync UI (GitHub-backed store, commit on save) | 3 | ✅ |
+| 19 | Value-stream view | 4 | ✅ |
+| 20 | DOCX/PPTX packs + Confluence publish button | 4 | ✅ |
+| 21 | Jira / Confluence / ServiceNow connectors (links + publish + read-only CMDB) | 4–5 | ✅ |
+| 22 | SCIM 2.0 Users API | 5 | ✅ |
+| 23 | Multi-tenant org scoping | 5 | ✅ |
+| 24 | Marketplace | 5 | ⛔ not started (adoption gate) |
+| 25 | i18n full sweep of remaining screens (Collaborate/ViewDesigner/…) | 6 | ✅ done in enhancement round |
+| 26 | Member management + group→role UI | 8 | ✅ done in enhancement round |
+| 27 | Conflict 3-pane / undo timeline / shortcuts / focus traps | 6/7 | ✅ done in enhancement round |
+| 28 | Server-mode E2E in CI | 6 | ✅ done in enhancement round |
 
 ---
 

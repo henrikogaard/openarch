@@ -128,3 +128,71 @@ describe('JWT verification', () => {
     expect(verifyJwt(`${header}.${body}.`, 'test-secret')).toBeUndefined();
   });
 });
+
+describe('OIDC RS256 end-to-end (local JWKS issuer)', () => {
+  it('verifies a real RS256 token against a discovered JWKS, and rejects bad aud/iss/signature', async () => {
+    const { generateKeyPairSync, sign: cryptoSign } = await import('node:crypto');
+    const { createServer } = await import('node:http');
+    const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = { ...(publicKey.export({ format: 'jwk' }) as object), kid: 'test-key-1', alg: 'RS256', use: 'sig' };
+
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith('/.well-known/openid-configuration')) {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ jwks_uri: `http://127.0.0.1:${(server.address() as { port: number }).port}/jwks` }));
+      } else if (req.url?.startsWith('/jwks')) {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ keys: [jwk] }));
+      } else {
+        res.statusCode = 404;
+        res.end();
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const issuer = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+
+    try {
+      const { refreshJwks, loadAuthConfig, resolveActor } = await import('./auth');
+      const config = loadAuthConfig({
+        OPENARCH_REQUIRE_AUTH: 'true',
+        OPENARCH_OIDC_ISSUER: issuer,
+        OPENARCH_OIDC_AUDIENCE: 'openarch-api',
+      } as unknown as NodeJS.ProcessEnv);
+      await refreshJwks(config);
+
+      const b64 = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+      const makeToken = (payload: object, key = privateKey) => {
+        const header = b64({ alg: 'RS256', kid: 'test-key-1', typ: 'JWT' });
+        const body = b64(payload);
+        const signature = cryptoSign('RSA-SHA256', Buffer.from(`${header}.${body}`), key).toString('base64url');
+        return `${header}.${body}.${signature}`;
+      };
+
+      const good = makeToken({
+        sub: 'oidc-user@example.com',
+        name: 'OIDC User',
+        iss: issuer,
+        aud: 'openarch-api',
+        exp: Math.floor(Date.now() / 1000) + 600,
+      });
+      const actor = resolveActor({ authorization: `Bearer ${good}` }, config);
+      expect(actor?.subject).toBe('oidc-user@example.com');
+      expect(actor?.authenticated).toBe(true);
+
+      const wrongAud = makeToken({ sub: 'u', iss: issuer, aud: 'other-api', exp: Math.floor(Date.now() / 1000) + 600 });
+      expect(resolveActor({ authorization: `Bearer ${wrongAud}` }, config)).toBeNull();
+
+      const wrongIss = makeToken({ sub: 'u', iss: 'https://evil.example', aud: 'openarch-api', exp: Math.floor(Date.now() / 1000) + 600 });
+      expect(resolveActor({ authorization: `Bearer ${wrongIss}` }, config)).toBeNull();
+
+      const { privateKey: otherKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+      const forged = makeToken({ sub: 'u', iss: issuer, aud: 'openarch-api', exp: Math.floor(Date.now() / 1000) + 600 }, otherKey);
+      expect(resolveActor({ authorization: `Bearer ${forged}` }, config)).toBeNull();
+
+      const expired = makeToken({ sub: 'u', iss: issuer, aud: 'openarch-api', exp: Math.floor(Date.now() / 1000) - 10 });
+      expect(resolveActor({ authorization: `Bearer ${expired}` }, config)).toBeNull();
+    } finally {
+      server.close();
+    }
+  });
+});

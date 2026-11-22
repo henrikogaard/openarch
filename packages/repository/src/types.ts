@@ -1,4 +1,4 @@
-import type { Model, ModelSummary, SavedView } from '@openarch/core';
+import type { GroupRole, Model, ModelSummary, SavedView, Waiver, WorkspaceMember } from '@openarch/core';
 import { workspaceSummary } from '@openarch/core';
 
 /**
@@ -18,6 +18,26 @@ export interface ModelRepository {
   listSavedViews?(modelId: string): Promise<SavedView[]>;
   saveSavedView?(view: SavedView): Promise<SavedView>;
   deleteSavedView?(modelId: string, viewId: string): Promise<void>;
+  /** Server-mode version history (snapshots). Undefined in local mode. */
+  listSnapshots?(modelId: string): Promise<unknown[]>;
+  getSnapshot?(modelId: string, snapshotId: string): Promise<Model>;
+  restoreSnapshot?(modelId: string, snapshotId: string): Promise<Model>;
+  createSnapshot?(modelId: string, label?: string): Promise<unknown>;
+  /** Server-mode member management (owner). */
+  getMembers?(modelId: string): Promise<{ members: WorkspaceMember[]; groupRoles: GroupRole[] }>;
+  saveMembers?(
+    modelId: string,
+    members: WorkspaceMember[],
+    groupRoles: GroupRole[],
+  ): Promise<{ members: WorkspaceMember[]; groupRoles: GroupRole[] }>;
+  /** Server-mode governance: approvals and check waivers. */
+  listApprovals?(modelId: string): Promise<unknown[]>;
+  recordApproval?(modelId: string, baselineId: string, decision: 'approved' | 'rejected', comment?: string): Promise<unknown>;
+  listWaivers?(modelId: string): Promise<Waiver[]>;
+  addWaiver?(modelId: string, waiver: { rule: string; entityId?: string; reason: string }): Promise<Waiver>;
+  deleteWaiver?(modelId: string, waiverId: string): Promise<void>;
+  /** Multi-tenant: assign the workspace to an organisation (server mode). */
+  setOrg?(modelId: string, orgId: string | null): Promise<unknown>;
 }
 
 export function summarize(model: Model): ModelSummary {

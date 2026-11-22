@@ -39,10 +39,25 @@ function layerOf(element: ArchiElement): Layer {
 }
 
 /**
+ * Index a model for O(1) lookups while rendering — naive scans made context
+ * generation O(E×V) on large models.
+ */
+function indexModel(model: Model): {
+  elementById: Map<string, ArchiElement>;
+  relationshipById: Map<string, Relationship>;
+} {
+  return {
+    elementById: new Map(model.elements.map((element) => [element.id, element])),
+    relationshipById: new Map(model.relationships.map((relationship) => [relationship.id, relationship])),
+  };
+}
+
+/**
  * Render a whole model as compact, information-dense Markdown suitable for an
  * LLM context window. Output is deterministic so identical models render alike.
  */
 export function modelToMarkdown(model: Model, maxChars = 24000): string {
+  const { elementById, relationshipById } = indexModel(model);
   const lines: string[] = [];
   const name = primaryText(model.name) || 'Untitled model';
   lines.push(`# ${name}`, '');
@@ -86,7 +101,7 @@ export function modelToMarkdown(model: Model, maxChars = 24000): string {
       lines.push(`Nodes (${view.nodes.length}):`);
       for (const node of view.nodes) {
         const ref = node.elementRef
-          ? elementName(model.elements.find((element) => element.id === node.elementRef))
+          ? elementName(elementById.get(node.elementRef))
           : primaryText(node.label) || '(unlabelled)';
         const { x, y, w, h } = node.bounds;
         lines.push(`- \`${node.id}\` → ${ref} [${node.type}] @ (${x}, ${y}, ${w}×${h})`);
@@ -94,7 +109,7 @@ export function modelToMarkdown(model: Model, maxChars = 24000): string {
       lines.push('');
       lines.push(`Edges (${view.edges.length}):`);
       for (const edge of view.edges) {
-        const relationship = model.relationships.find((item) => item.id === edge.relationshipRef);
+        const relationship = relationshipById.get(edge.relationshipRef);
         const label = relationship
           ? getRelationshipType(relationship.type)?.label ?? relationship.type
           : edge.type;
@@ -131,13 +146,14 @@ export function elementToMarkdown(model: Model, elementId: string): string {
     }
   }
 
+  const { elementById } = indexModel(model);
   const outgoing = model.relationships.filter((relationship) => relationship.source === elementId);
   const incoming = model.relationships.filter((relationship) => relationship.target === elementId);
 
   lines.push('', `## Outgoing relationships (${outgoing.length})`);
   if (outgoing.length === 0) lines.push('_None_');
   for (const relationship of outgoing) {
-    const other = model.elements.find((item) => item.id === relationship.target);
+    const other = elementById.get(relationship.target);
     const type = getRelationshipType(relationship.type)?.label ?? relationship.type;
     lines.push(`- ${type} → ${elementName(other)} (\`${relationship.id}\`)`);
   }
@@ -145,7 +161,7 @@ export function elementToMarkdown(model: Model, elementId: string): string {
   lines.push('', `## Incoming relationships (${incoming.length})`);
   if (incoming.length === 0) lines.push('_None_');
   for (const relationship of incoming) {
-    const other = model.elements.find((item) => item.id === relationship.source);
+    const other = elementById.get(relationship.source);
     const type = getRelationshipType(relationship.type)?.label ?? relationship.type;
     lines.push(`- ${type} ← ${elementName(other)} (\`${relationship.id}\`)`);
   }
